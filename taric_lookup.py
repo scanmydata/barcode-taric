@@ -48,8 +48,14 @@ _TRANSLATIONS = {
     "νερό": "water",
     "μεταλλικό νερό": "mineral water",
     "υγρό vape": "vape e-liquid",
+    "υγρό ηλεκτρονικού τσιγάρου": "vape e-liquid",
     "ηλεκτρονικό τσιγάρο": "electronic cigarette",
 }
+
+
+def _debug(message: str) -> None:
+    if os.getenv("BARCODE_TARIC_DEBUG") == "1":
+        print(f"[debug] {message}", file=sys.stderr)
 
 
 def _http_json(url: str, *, timeout: int = 12, method: str = "GET", body: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None) -> Any:
@@ -136,8 +142,12 @@ def load_inputs(file_path: Path) -> list[str]:
 def fetch_openfoodfacts_product(barcode: str) -> dict[str, Any]:
     try:
         payload = _http_json(OPENFOODFACTS_URL.format(barcode=urllib.parse.quote(barcode)), timeout=10)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return {"source": "OpenFoodFacts", "found": False, "error": "request_failed"}
+    except TimeoutError:
+        return {"source": "OpenFoodFacts", "found": False, "error": "timeout"}
+    except urllib.error.URLError:
+        return {"source": "OpenFoodFacts", "found": False, "error": "network_error"}
+    except json.JSONDecodeError:
+        return {"source": "OpenFoodFacts", "found": False, "error": "invalid_response"}
 
     if payload.get("status") != 1:
         return {"source": "OpenFoodFacts", "found": False}
@@ -199,7 +209,8 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Opt
             )
             return response["choices"][0]["message"]["content"].strip()
 
-    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        _debug(f"AI rewrite failed ({provider}): {exc}")
         return None
 
     return None
@@ -267,7 +278,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.file:
         try:
             items.extend(load_inputs(args.file))
-        except Exception as exc:
+        except (ValueError, OSError) as exc:
             print(f"Failed to read {args.file}: {exc}", file=sys.stderr)
             return 2
 

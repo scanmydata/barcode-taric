@@ -38,6 +38,11 @@ class TaricLookupTests(unittest.TestCase):
     def test_best_taric_match_returns_none_when_no_match(self):
         self.assertIsNone(best_taric_match("zzqv totally unrelated product text"))
 
+    def test_best_taric_match_tie_keeps_first_highest(self):
+        match = best_taric_match("water laptop")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.hs4, "2201")
+
     def test_load_inputs_from_xlsx_with_mocked_openpyxl(self):
         class FakeSheet:
             def iter_rows(self, values_only=True):
@@ -71,7 +76,7 @@ class TaricLookupTests(unittest.TestCase):
         result = fetch_openfoodfacts_product("5201005080027")
         self.assertEqual(result["source"], "OpenFoodFacts")
         self.assertFalse(result["found"])
-        self.assertEqual(result["error"], "request_failed")
+        self.assertEqual(result["error"], "network_error")
 
 
 if __name__ == "__main__":
