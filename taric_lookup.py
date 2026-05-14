@@ -20,6 +20,8 @@ from typing import Any, Iterable, List, Optional
 OPENFOODFACTS_URL = "https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
 POLLINATIONS_URL = "https://text.pollinations.ai/{prompt}"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
+BARCODE_MONSTER_URL = "https://barcode.monster/api/{barcode}"
 
 
 @dataclass(frozen=True)
@@ -31,10 +33,106 @@ class TaricEntry:
 
 
 DEFAULT_TARIC_CATALOG: tuple[TaricEntry, ...] = (
-    TaricEntry("2201100000", "2201", "Waters, including natural or artificial mineral waters", ("water", "mineral", "drink")),
-    TaricEntry("6105100000", "6105", "Men's shirts of cotton, knitted or crocheted", ("shirt", "mens", "cotton", "garment", "clothing")),
-    TaricEntry("8471300000", "8471", "Portable automatic data processing machines", ("laptop", "notebook", "computer", "macbook")),
-    TaricEntry("2404120000", "2404", "Products for inhalation without combustion", ("vape", "e-liquid", "electronic cigarette", "liquid")),
+    # --- Chapter 22: Beverages ---
+    TaricEntry(
+        "2201101100", "2201",
+        "Natural mineral waters, non-carbonated, not flavoured",
+        ("natural mineral water", "still mineral water", "mineral water",
+         "still water", "spring water", "water", "mineral", "drink"),
+    ),
+    TaricEntry(
+        "2201101900", "2201",
+        "Natural mineral waters, carbonated, not flavoured",
+        ("sparkling mineral water", "carbonated mineral water", "aerated water",
+         "sparkling water", "fizzy water"),
+    ),
+    TaricEntry(
+        "2202100000", "2202",
+        "Waters with added sugar, sweeteners or flavouring",
+        ("flavoured water", "sweetened water", "water drink"),
+    ),
+    TaricEntry(
+        "2202990000", "2202",
+        "Other non-alcoholic beverages",
+        ("energy drink", "soft drink", "soda", "cola", "lemonade", "isotonic"),
+    ),
+    # --- Chapter 24: Tobacco / Vaping ---
+    TaricEntry(
+        "2404120000", "2404",
+        "Products for electronic cigarettes and similar devices, without nicotine",
+        ("vape", "e-liquid", "electronic cigarette", "e-cigarette", "vaping",
+         "liquid", "flavor shot", "flavour shot", "inhalation", "puff", "bar juice"),
+    ),
+    TaricEntry(
+        "2404110000", "2404",
+        "Products for electronic cigarettes and similar devices, with nicotine",
+        ("nicotine e-liquid", "nic salt", "nicotine vape", "vape nicotine"),
+    ),
+    TaricEntry(
+        "2402200000", "2402",
+        "Cigarettes containing tobacco",
+        ("cigarette", "tobacco cigarette", "smoking"),
+    ),
+    # --- Chapter 61/62: Clothing ---
+    TaricEntry(
+        "6105100000", "6105",
+        "Men's shirts of cotton, knitted or crocheted",
+        ("shirt", "mens", "cotton", "garment", "clothing", "t-shirt", "polo"),
+    ),
+    TaricEntry(
+        "6109100000", "6109",
+        "T-shirts of cotton",
+        ("t-shirt", "tshirt", "top", "cotton top"),
+    ),
+    TaricEntry(
+        "6203420000", "6203",
+        "Men's trousers of cotton",
+        ("trousers", "pants", "jeans", "denim"),
+    ),
+    # --- Chapter 84/85: Electronics ---
+    TaricEntry(
+        "8471300000", "8471",
+        "Portable automatic data processing machines",
+        ("laptop", "notebook", "computer", "macbook", "portable computer"),
+    ),
+    TaricEntry(
+        "8517120000", "8517",
+        "Smartphones and mobile phones",
+        ("smartphone", "mobile phone", "cell phone", "phone"),
+    ),
+    TaricEntry(
+        "8542310000", "8542",
+        "Electronic integrated circuits",
+        ("chip", "semiconductor", "integrated circuit", "microchip", "cpu"),
+    ),
+    # --- Chapter 33: Cosmetics ---
+    TaricEntry(
+        "3304990000", "3304",
+        "Beauty or make-up preparations",
+        ("makeup", "cosmetic", "foundation", "lipstick", "mascara"),
+    ),
+    TaricEntry(
+        "3305100000", "3305",
+        "Shampoos",
+        ("shampoo", "hair wash"),
+    ),
+    TaricEntry(
+        "3307200000", "3307",
+        "Personal deodorants and antiperspirants",
+        ("deodorant", "antiperspirant", "body spray"),
+    ),
+    # --- Chapter 30: Pharmaceuticals ---
+    TaricEntry(
+        "3004900000", "3004",
+        "Medicaments for therapeutic use",
+        ("medicine", "drug", "tablet", "capsule", "pharmaceutical", "vitamin", "supplement"),
+    ),
+    # --- Chapter 95: Toys ---
+    TaricEntry(
+        "9503000000", "9503",
+        "Toys",
+        ("toy", "game", "puzzle", "doll", "action figure", "board game"),
+    ),
 )
 
 
@@ -159,7 +257,73 @@ def fetch_openfoodfacts_product(barcode: str) -> dict[str, Any]:
         "product_name": product.get("product_name"),
         "brand": product.get("brands"),
         "categories": product.get("categories"),
+        "description": product.get("generic_name"),
     }
+
+
+def fetch_upcitemdb_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from UPC ItemDB (free tier, ~100 req/day, no key)."""
+    url = UPCITEMDB_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        payload = _http_json(url, timeout=10)
+    except TimeoutError:
+        return {"source": "UPCItemDB", "found": False, "error": "timeout"}
+    except urllib.error.URLError:
+        return {"source": "UPCItemDB", "found": False, "error": "network_error"}
+    except json.JSONDecodeError:
+        return {"source": "UPCItemDB", "found": False, "error": "invalid_response"}
+
+    items = payload.get("items") or []
+    if not items:
+        return {"source": "UPCItemDB", "found": False}
+
+    item = items[0]
+    return {
+        "source": "UPCItemDB",
+        "found": True,
+        "product_name": item.get("title"),
+        "brand": item.get("brand"),
+        "categories": item.get("category"),
+        "description": item.get("description"),
+    }
+
+
+def fetch_barcode_monster_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from Barcode Monster (free, no key required)."""
+    url = BARCODE_MONSTER_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        payload = _http_json(url, timeout=10)
+    except TimeoutError:
+        return {"source": "BarcodeMonster", "found": False, "error": "timeout"}
+    except urllib.error.URLError:
+        return {"source": "BarcodeMonster", "found": False, "error": "network_error"}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return {"source": "BarcodeMonster", "found": False, "error": "invalid_response"}
+
+    if not payload or not payload.get("product"):
+        return {"source": "BarcodeMonster", "found": False}
+
+    return {
+        "source": "BarcodeMonster",
+        "found": True,
+        "product_name": payload.get("product"),
+        "brand": payload.get("brand"),
+        "categories": payload.get("category"),
+        "description": payload.get("description"),
+    }
+
+
+def fetch_product_multi_source(barcode: str) -> dict[str, Any]:
+    """Try OpenFoodFacts, UPC ItemDB, and Barcode Monster in order; return first hit."""
+    for fetcher in (fetch_openfoodfacts_product, fetch_upcitemdb_product, fetch_barcode_monster_product):
+        try:
+            result = fetcher(barcode)
+            if result.get("found"):
+                _debug(f"Product found via {result.get('source')} for {barcode}")
+                return result
+        except Exception as exc:
+            _debug(f"{fetcher.__name__} raised: {exc}")
+    return {"source": "none", "found": False}
 
 
 def parser_rewrite_to_customs_text(text: str) -> str:
@@ -233,10 +397,16 @@ def resolve_item(item: str, *, ai_provider: str = "pollinations") -> dict[str, A
     source_data: dict[str, Any] = {}
     commercial_text = query
     if normalized_barcode:
-        source_data = fetch_openfoodfacts_product(normalized_barcode)
+        source_data = fetch_product_multi_source(normalized_barcode)
         if source_data.get("found"):
+            parts = [
+                source_data.get("product_name"),
+                source_data.get("categories"),
+                source_data.get("brand"),
+                source_data.get("description"),
+            ]
             commercial_text = " ".join(
-                str(v) for v in (source_data.get("product_name"), source_data.get("categories"), source_data.get("brand")) if v
+                str(p) for p in parts if p and str(p) not in ("None", "")
             )
 
     parser_text = parser_rewrite_to_customs_text(commercial_text)
