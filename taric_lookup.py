@@ -119,7 +119,7 @@ def load_inputs(file_path: Path) -> list[str]:
             raise ValueError("For Excel input install openpyxl: pip install openpyxl") from exc
 
         workbook = load_workbook(filename=file_path, read_only=True, data_only=True)
-        values: list[str] = []
+        excel_values: list[str] = []
         for sheet in workbook.worksheets:
             for row in sheet.iter_rows(values_only=True):
                 for cell in row:
@@ -127,8 +127,8 @@ def load_inputs(file_path: Path) -> list[str]:
                         continue
                     value = str(cell).strip()
                     if value:
-                        values.append(value)
-        return values
+                        excel_values.append(value)
+        return excel_values
 
     raise ValueError("Unsupported input file type. Use .txt, .csv, .tsv, .xlsx")
 
@@ -199,7 +199,7 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Opt
             )
             return response["choices"][0]["message"]["content"].strip()
 
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError):
         return None
 
     return None
