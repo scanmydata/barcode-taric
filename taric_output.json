@@ -1,0 +1,17 @@
+[
+  {
+    "input": "Natural Mineral Water 500ml",
+    "barcode": null,
+    "valid_ean13": false,
+    "source": {
+      "source": "direct_input"
+    },
+    "commercial_text": "Natural Mineral Water 500ml",
+    "customs_text": "natural mineral water 500ml",
+    "match": {
+      "taric_code": "2201101100",
+      "hs4": "2201",
+      "description": "Natural mineral waters, non-carbonated, not flavoured"
+    }
+  }
+]
