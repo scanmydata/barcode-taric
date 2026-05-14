@@ -47,7 +47,7 @@ _TRANSLATIONS = {
     "υπολογιστής": "computer",
     "νερό": "water",
     "μεταλλικό νερό": "mineral water",
-    "υγρό vape": "e-liquid vape",
+    "υγρό vape": "vape e-liquid",
     "ηλεκτρονικό τσιγάρο": "electronic cigarette",
 }
 
@@ -230,7 +230,7 @@ def resolve_item(item: str, *, ai_provider: str = "pollinations") -> dict[str, A
 
     parser_text = parser_rewrite_to_customs_text(commercial_text)
     ai_text = ai_rewrite_to_customs_text(commercial_text, provider=ai_provider)
-    customs_text = parser_text if not ai_text else parser_rewrite_to_customs_text(ai_text)
+    customs_text = parser_rewrite_to_customs_text(ai_text) if ai_text else parser_text
 
     match = best_taric_match(customs_text)
 
