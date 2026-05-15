@@ -1,24 +1,24 @@
 [
   {
-    "input": "4904530593260",
-    "barcode": "4904530593260",
+    "input": "8000500020012",
+    "barcode": "8000500020012",
     "valid_ean13": true,
     "source": {
-      "source": "GoUPC",
+      "source": "OpenFoodFacts",
       "found": true,
-      "product_name": "Toshiba High Power LR6 AA 12-Shrink",
-      "brand": "Toshiba",
-      "categories": "",
-      "description": "Toshiba to najbardziej rozpoznawalna japońska marka akumulatorów na świecie. Dział baterii Toshiba inwestuje w badania i rozwój, aby projektować innowacyjne produkty z użyciem najwyższej klasy materiałów, utrzymujących najwyższą jakość i wydajność. Baterie alkaiczne AA znanej marki Toshiba wykonane są z wysokiej jakości materiałów i charakteryzują się długą żywotnością. Ich napięcie znamionowe wynosi 1,5V, dlatego mogą być wykorzystywane do zasilania sprzętów domowych tj. piloty, zegarki, czujniki dymu, latarki, zabawki lub aparaty fotograficzne. Wszystkie baterie Toshiba są w pełni naładowane i gotowe do użycia. Nie zawierają rtęci, kadmu i ołowiu, zapewniając zaufane źródło energii."
+      "product_name": "Maxi Kinder Surprise 150g Hotwheels",
+      "brand": "Ferrero, Kinder",
+      "categories": "Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux",
+      "description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique"
     },
-    "product_name": "Toshiba High Power LR6 AA 12-Shrink",
-    "product_description": "Toshiba to najbardziej rozpoznawalna japońska marka akumulatorów na świecie. Dział baterii Toshiba inwestuje w badania i rozwój, aby projektować innowacyjne produkty z użyciem najwyższej klasy materiałów, utrzymujących najwyższą jakość i wydajność. Baterie alkaiczne AA znanej marki Toshiba wykonane są z wysokiej jakości materiałów i charakteryzują się długą żywotnością. Ich napięcie znamionowe wynosi 1,5V, dlatego mogą być wykorzystywane do zasilania sprzętów domowych tj. piloty, zegarki, czujniki dymu, latarki, zabawki lub aparaty fotograficzne. Wszystkie baterie Toshiba są w pełni naładowane i gotowe do użycia. Nie zawierają rtęci, kadmu i ołowiu, zapewniając zaufane źródło energii.",
-    "commercial_text": "Toshiba High Power LR6 AA 12-Shrink Toshiba Toshiba to najbardziej rozpoznawalna japońska marka akumulatorów na świecie. Dział baterii Toshiba inwestuje w badania i rozwój, aby projektować innowacyjne produkty z użyciem najwyższej klasy materiałów, utrzymujących najwyższą jakość i wydajność. Baterie alkaiczne AA znanej marki Toshiba wykonane są z wysokiej jakości materiałów i charakteryzują się długą żywotnością. Ich napięcie znamionowe wynosi 1,5V, dlatego mogą być wykorzystywane do zasilania sprzętów domowych tj. piloty, zegarki, czujniki dymu, latarki, zabawki lub aparaty fotograficzne. Wszystkie baterie Toshiba są w pełni naładowane i gotowe do użycia. Nie zawierają rtęci, kadmu i ołowiu, zapewniając zaufane źródło energii.",
-    "customs_text": "alkaline aa batteries non lead mercury cadmium nicotine intended household electronic devices remote controls clocks smoke detectors flashlights toys cameras",
+    "product_name": "Maxi Kinder Surprise 150g Hotwheels",
+    "product_description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
+    "commercial_text": "Maxi Kinder Surprise 150g Hotwheels Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux Ferrero, Kinder Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
+    "customs_text": "egg-shaped milk chocolate confection 150 containing plastic toy capsule easter egg",
     "match": {
-      "taric_code": "2404110000",
-      "hs4": "2404",
-      "description": "Vapor products with nicotine"
+      "taric_code": "1704100010",
+      "hs4": "1704",
+      "description": "Sugar confectionery - Sweets"
     }
   }
 ]

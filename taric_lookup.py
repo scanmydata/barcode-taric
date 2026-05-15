@@ -98,6 +98,18 @@ else:
             "Wine of fresh grapes, not sparkling, not fortified, <= 2L",
             ("wine", "red wine", "white wine", "rose wine"),
         ),
+        # --- Chapter 8: Electrical Machinery - Primary Batteries ---
+        TaricEntry(
+            "8506100010", "8506",
+            "Alkaline manganese dioxide batteries",
+            ("alkaline battery", "aa battery", "aaa battery", "primary battery", 
+             "primary cell", "disposable battery", "zinc carbon battery"),
+        ),
+        TaricEntry(
+            "8506600010", "8506",
+            "Other primary batteries and cells",
+            ("battery", "primary cell", "dry cell", "disposable cell"),
+        ),
         # --- Chapter 24: Tobacco / Vaping ---
         TaricEntry(
             "2404120000", "2404",
@@ -687,7 +699,8 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "auto") -> Optional[st
     provider = _get_effective_ai_provider(provider)
     prompt = (
         "Rewrite this commercial product text into a concise customs-style description suitable for EU TARIC classification. "
-        "Focus on material, product use, nicotine status, beverage type and any relevant customs classification hints. "
+        "Focus on material composition, product use/function, and any relevant customs classification hints. "
+        "For beverages, include type. For tobacco/vaping products, include nicotine status. "
         "Return only the short classification description in English with no extra commentary. "
         f"Product: {text}"
     )
@@ -778,6 +791,36 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "auto") -> Optional[st
     return None
 
 
+def ai_inspect_and_correct_customs_text(
+    match: Optional[TaricEntry],
+    customs_text: str,
+    commercial_text: str,
+    provider: str = "auto",
+) -> Optional[str]:
+    if provider == "none":
+        return None
+
+    match_label = (
+        f"{match.taric_code} ({match.description})" if match else "no current TARIC match"
+    )
+
+    prompt = (
+        "Inspect the previously selected EU TARIC classification and correct it if needed. "
+        "Commercial product text: {commercial_text} "
+        "Current customs-style description: {customs_text} "
+        "Current TARIC match: {match_label} "
+        "If the match is incorrect, rewrite a concise customs-style description in English that better reflects the product and can be used for EU TARIC matching. "
+        "If the match is already correct, return the same description or a slightly improved version. "
+        "Do not include any extra commentary."
+    ).format(
+        commercial_text=commercial_text,
+        customs_text=customs_text,
+        match_label=match_label,
+    )
+
+    return ai_rewrite_to_customs_text(prompt, provider=provider)
+
+
 def search_products_by_description(search_text: str, ai_provider: str = "auto") -> list[dict[str, Any]]:
     """Search database and web for products matching description, retrieve barcodes and TARIC codes."""
     if not HAS_DATABASE:
@@ -828,8 +871,12 @@ def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_
                 overlap = len(query_tokens.intersection(keyword_tokens))
                 score += overlap
 
-        # Disambiguate the nicotine/non-nicotine 2404 entries when query is explicit.
-        if "nicotine" in query_tokens:
+        # Disambiguate the nicotine/non-nicotine 2404 entries only when query is explicit AND has vaping-related keywords.
+        # This prevents false positives where "nicotine" appears in unrelated products.
+        vaping_keywords = {"vape", "eliquid", "liquid", "ecig", "ecigarette", "puff", "inhalation", "juice"}
+        has_vaping_context = bool(query_tokens.intersection(vaping_keywords))
+        
+        if "nicotine" in query_tokens and has_vaping_context:
             if "with nicotine" in normalized_description:
                 score += 5
             if "without nicotine" in normalized_description:
@@ -869,8 +916,23 @@ def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = Tr
     ai_text = ai_rewrite_to_customs_text(commercial_text, provider=effective_provider)
     customs_text = parser_rewrite_to_customs_text(ai_text) if ai_text else parser_text
 
+    corrected_customs_text = None
     match = best_taric_match(customs_text)
-    
+
+    if effective_provider != "none":
+        verified_text = ai_inspect_and_correct_customs_text(
+            match,
+            customs_text,
+            commercial_text,
+            provider=effective_provider,
+        )
+        if verified_text:
+            corrected_customs_text = parser_rewrite_to_customs_text(verified_text)
+            if corrected_customs_text != customs_text:
+                _debug("AI inspection revised customs text; re-running TARIC matching")
+                customs_text = corrected_customs_text
+                match = best_taric_match(customs_text)
+
     result = {
         "input": query,
         "barcode": normalized_barcode,
@@ -880,6 +942,10 @@ def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = Tr
         "product_description": product_description,
         "commercial_text": commercial_text,
         "customs_text": customs_text,
+        "ai_inspection": {
+            "provider": effective_provider,
+            "corrected_customs_text": corrected_customs_text,
+        },
         "match": {
             "taric_code": match.taric_code if match else None,
             "hs4": match.hs4 if match else None,
