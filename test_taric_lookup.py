@@ -7,6 +7,9 @@ from unittest.mock import patch
 from taric_lookup import (
     best_taric_match,
     fetch_barcode_monster_product,
+    fetch_barcodelookup_product,
+    fetch_ean_search_product,
+    fetch_go_upc_product,
     fetch_openfoodfacts_product,
     fetch_product_multi_source,
     fetch_upcitemdb_product,
@@ -32,6 +35,23 @@ class TaricLookupTests(unittest.TestCase):
         self.assertIn("mens", text)
         self.assertIn("cotton", text)
         self.assertIn("shirt", text)
+
+    def test_parser_rewrites_more_greek_terms(self):
+        text = parser_rewrite_to_customs_text("Υγρό ηλεκτρονικού τσιγάρου με νικοτίνη")
+        self.assertIn("vape", text)
+        self.assertIn("nicotine", text)
+
+    def test_best_taric_match_for_greek_clothing_text(self):
+        rewritten = parser_rewrite_to_customs_text("Ανδρικό βαμβακερό πουκάμισο")
+        match = best_taric_match(rewritten)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.hs4, "6105")
+
+    def test_best_taric_match_prefers_nicotine_vape_entry(self):
+        rewritten = parser_rewrite_to_customs_text("υγρό vape με νικοτίνη")
+        match = best_taric_match(rewritten)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.taric_code, "2404110000")
 
     def test_best_taric_match_for_laptop(self):
         match = best_taric_match("portable laptop computer")
@@ -141,14 +161,79 @@ class TaricLookupTests(unittest.TestCase):
         result = fetch_barcode_monster_product("0000000000000")
         self.assertFalse(result["found"])
 
+    @patch("taric_lookup._http_text")
+    def test_fetch_go_upc_product_parse_result(self, mock_text):
+        mock_text.return_value = (
+            '<h1 class="product-name">Test Product</h1>'
+            '<td class="metadata-label">Brand</td><td>Demo</td>'
+            '<td class="metadata-label">Category</td><td>Food</td>'
+            '<h2>\n          Description\n        </h2><span>Sample item</span>'
+        )
+        result = fetch_go_upc_product("5201005080027")
+        self.assertTrue(result["found"])
+        self.assertEqual(result["source"], "GoUPC")
+        self.assertEqual(result["product_name"], "Test Product")
+        self.assertEqual(result["brand"], "Demo")
+        self.assertEqual(result["categories"], "Food")
+        self.assertEqual(result["description"], "Sample item")
+
+    @patch("taric_lookup._http_text")
+    def test_fetch_go_upc_product_not_found(self, mock_text):
+        mock_text.return_value = "No product found."
+        result = fetch_go_upc_product("0000000000000")
+        self.assertFalse(result["found"])
+        self.assertEqual(result["source"], "GoUPC")
+
+    @patch("taric_lookup._http_text")
+    def test_fetch_barcodelookup_product_parse_result(self, mock_text):
+        mock_text.return_value = (
+            '<title>Sample Product — Barcode Lookup</title>'
+            '<td class="metadata-label">Brand</td><td>DemoBrand</td>'
+            '<td class="metadata-label">Category</td><td>Electronics</td>'
+            '<h2>Description</h2><div>Example description.</div>'
+        )
+        result = fetch_barcodelookup_product("5201005080027")
+        self.assertTrue(result["found"])
+        self.assertEqual(result["source"], "BarcodeLookup")
+        self.assertEqual(result["product_name"], "Sample Product")
+        self.assertEqual(result["brand"], "DemoBrand")
+        self.assertEqual(result["categories"], "Electronics")
+        self.assertEqual(result["description"], "Example description.")
+
+    @patch("taric_lookup._http_text")
+    def test_fetch_ean_search_product_parse_result(self, mock_text):
+        mock_text.return_value = (
+            '<title>Sample Product — EAN Search</title>'
+            '<td class="metadata-label">Brand</td><td>EANBrand</td>'
+            '<td class="metadata-label">Category</td><td>Household</td>'
+            '<meta name="description" content="Sample item description." />'
+        )
+        result = fetch_ean_search_product("5201005080027")
+        self.assertTrue(result["found"])
+        self.assertEqual(result["source"], "EANSearch")
+        self.assertEqual(result["product_name"], "Sample Product")
+        self.assertEqual(result["brand"], "EANBrand")
+        self.assertEqual(result["categories"], "Household")
+        self.assertEqual(result["description"], "Sample item description.")
+
+    @patch("taric_lookup._http_text")
+    def test_fetch_ean_search_product_not_found(self, mock_text):
+        mock_text.return_value = "No results found."
+        result = fetch_ean_search_product("0000000000000")
+        self.assertFalse(result["found"])
+        self.assertEqual(result["source"], "EANSearch")
+
     # ------------------------------------------------------------------
     # Multi-source lookup
     # ------------------------------------------------------------------
 
+    @patch("taric_lookup.fetch_barcodelookup_product")
+    @patch("taric_lookup.fetch_ean_search_product")
+    @patch("taric_lookup.fetch_go_upc_product")
     @patch("taric_lookup.fetch_barcode_monster_product")
     @patch("taric_lookup.fetch_upcitemdb_product")
     @patch("taric_lookup.fetch_openfoodfacts_product")
-    def test_fetch_product_multi_source_returns_first_hit(self, mock_off, mock_upc, mock_monster):
+    def test_fetch_product_multi_source_returns_first_hit(self, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
         mock_off.return_value = {"source": "OpenFoodFacts", "found": True, "product_name": "AVRA Water", "brand": "AVRA", "categories": "Waters", "description": None}
         result = fetch_product_multi_source("5201005080027")
         self.assertEqual(result["source"], "OpenFoodFacts")
@@ -165,13 +250,19 @@ class TaricLookupTests(unittest.TestCase):
         self.assertEqual(result["source"], "UPCItemDB")
         mock_monster.assert_not_called()
 
+    @patch("taric_lookup.fetch_barcodelookup_product")
+    @patch("taric_lookup.fetch_ean_search_product")
+    @patch("taric_lookup.fetch_go_upc_product")
     @patch("taric_lookup.fetch_barcode_monster_product")
     @patch("taric_lookup.fetch_upcitemdb_product")
     @patch("taric_lookup.fetch_openfoodfacts_product")
-    def test_fetch_product_multi_source_all_fail(self, mock_off, mock_upc, mock_monster):
+    def test_fetch_product_multi_source_all_fail(self, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
         mock_off.return_value = {"source": "OpenFoodFacts", "found": False}
         mock_upc.return_value = {"source": "UPCItemDB", "found": False}
         mock_monster.return_value = {"source": "BarcodeMonster", "found": False}
+        mock_go.return_value = {"source": "GoUPC", "found": False}
+        mock_es.return_value = {"source": "EANSearch", "found": False}
+        mock_bl.return_value = {"source": "BarcodeLookup", "found": False}
         result = fetch_product_multi_source("0000000000000")
         self.assertFalse(result["found"])
 

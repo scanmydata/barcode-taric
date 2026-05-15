@@ -11,7 +11,8 @@ Minimal CLI + GUI for matching barcodes or product descriptions to TARIC codes.
   - **Barcode Monster** – additional fallback
 - Rule-based parser for commercial → customs description rewrite
 - Optional free AI rewrite via Pollinations (no API key)
-- Optional OpenRouter free model if `OPENROUTER_API_KEY` is set
+- Optional OpenRouter free model if `OPENROUTER_API_KEY` is set via `.env` or environment variables
+- New barcode scraping endpoints for `https://go-upc.com/search?q={barcode}`, `https://www.ean-search.org/?q={barcode}` and `https://www.barcodelookup.com/{barcode}`
 - Expanded TARIC catalog with correct 10-digit codes (food, beverages, vaping, clothing, electronics, cosmetics, pharma)
 - Unified JSON output with normalized input, source context, customs text and TARIC match
 - **Tkinter GUI** for interactive single/batch lookups and JSON export

@@ -201,7 +201,7 @@ class BarcodeApp(tk.Tk):
             try:
                 results = [resolve_item(item, ai_provider=provider) for item in items]
                 self._queue.put(results)
-        except (ValueError, OSError, urllib.error.URLError, json.JSONDecodeError) as exc:  # noqa: BLE001
+            except (ValueError, OSError, urllib.error.URLError, json.JSONDecodeError) as exc:  # noqa: BLE001
                 self._queue.put(exc)
 
         threading.Thread(target=worker, daemon=True).start()

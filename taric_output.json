@@ -1,17 +1,17 @@
 [
   {
-    "input": "Natural Mineral Water 500ml",
+    "input": "Stamp ink red",
     "barcode": null,
     "valid_ean13": false,
     "source": {
       "source": "direct_input"
     },
-    "commercial_text": "Natural Mineral Water 500ml",
-    "customs_text": "natural mineral water 500ml",
+    "commercial_text": "Stamp ink red",
+    "customs_text": "stamp ink red",
     "match": {
-      "taric_code": "2201101100",
-      "hs4": "2201",
-      "description": "Natural mineral waters, non-carbonated, not flavoured"
+      "taric_code": "3210000000",
+      "hs4": "3210",
+      "description": "Printing inks and preparations"
     }
   }
 ]

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,12 +18,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
+# Import full EU TARIC catalog with 160+ entries
+try:
+    from full_taric_catalog import FULL_TARIC_CATALOG, TaricEntry as FullTaricEntry
+    HAS_FULL_CATALOG = True
+except ImportError:
+    HAS_FULL_CATALOG = False
 
 OPENFOODFACTS_URL = "https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
 POLLINATIONS_URL = "https://text.pollinations.ai/{prompt}"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
 BARCODE_MONSTER_URL = "https://barcode.monster/api/{barcode}"
+BARCODELOOKUP_URL = "https://www.barcodelookup.com/{barcode}"
+GOUNPC_SEARCH_URL = "https://go-upc.com/search?q={barcode}"
+EAN_SEARCH_URL = "https://www.ean-search.org/?q={barcode}"
+DOTENV_PATH = Path(".env")
 
 
 @dataclass(frozen=True)
@@ -32,128 +44,238 @@ class TaricEntry:
     keywords: tuple[str, ...]
 
 
-DEFAULT_TARIC_CATALOG: tuple[TaricEntry, ...] = (
-    # --- Chapter 22: Beverages ---
-    TaricEntry(
-        "2201101100", "2201",
-        "Natural mineral waters, non-carbonated, not flavoured",
-        ("natural mineral water", "still mineral water", "mineral water",
-         "still water", "spring water", "water", "mineral", "drink"),
-    ),
-    TaricEntry(
-        "2201101900", "2201",
-        "Natural mineral waters, carbonated, not flavoured",
-        ("sparkling mineral water", "carbonated mineral water", "aerated water",
-         "sparkling water", "fizzy water"),
-    ),
-    TaricEntry(
-        "2202100000", "2202",
-        "Waters with added sugar, sweeteners or flavouring",
-        ("flavoured water", "sweetened water", "water drink"),
-    ),
-    TaricEntry(
-        "2202990000", "2202",
-        "Other non-alcoholic beverages",
-        ("energy drink", "soft drink", "soda", "cola", "lemonade", "isotonic"),
-    ),
-    # --- Chapter 24: Tobacco / Vaping ---
-    TaricEntry(
-        "2404120000", "2404",
-        "Products for electronic cigarettes and similar devices, without nicotine",
-        ("vape", "e-liquid", "electronic cigarette", "e-cigarette", "vaping",
-         "liquid", "flavor shot", "flavour shot", "inhalation", "puff", "bar juice"),
-    ),
-    TaricEntry(
-        "2404110000", "2404",
-        "Products for electronic cigarettes and similar devices, with nicotine",
-        ("nicotine e-liquid", "nic salt", "nicotine vape", "vape nicotine"),
-    ),
-    TaricEntry(
-        "2402200000", "2402",
-        "Cigarettes containing tobacco",
-        ("cigarette", "tobacco cigarette", "smoking"),
-    ),
-    # --- Chapter 61/62: Clothing ---
-    TaricEntry(
-        "6105100000", "6105",
-        "Men's shirts of cotton, knitted or crocheted",
-        ("shirt", "mens", "cotton", "garment", "clothing", "t-shirt", "polo"),
-    ),
-    TaricEntry(
-        "6109100000", "6109",
-        "T-shirts of cotton",
-        ("t-shirt", "tshirt", "top", "cotton top"),
-    ),
-    TaricEntry(
-        "6203420000", "6203",
-        "Men's trousers of cotton",
-        ("trousers", "pants", "jeans", "denim"),
-    ),
-    # --- Chapter 84/85: Electronics ---
-    TaricEntry(
-        "8471300000", "8471",
-        "Portable automatic data processing machines",
-        ("laptop", "notebook", "computer", "macbook", "portable computer"),
-    ),
-    TaricEntry(
-        "8517120000", "8517",
-        "Smartphones and mobile phones",
-        ("smartphone", "mobile phone", "cell phone", "phone"),
-    ),
-    TaricEntry(
-        "8542310000", "8542",
-        "Electronic integrated circuits",
-        ("chip", "semiconductor", "integrated circuit", "microchip", "cpu"),
-    ),
-    # --- Chapter 33: Cosmetics ---
-    TaricEntry(
-        "3304990000", "3304",
-        "Beauty or make-up preparations",
-        ("makeup", "cosmetic", "foundation", "lipstick", "mascara"),
-    ),
-    TaricEntry(
-        "3305100000", "3305",
-        "Shampoos",
-        ("shampoo", "hair wash"),
-    ),
-    TaricEntry(
-        "3307200000", "3307",
-        "Personal deodorants and antiperspirants",
-        ("deodorant", "antiperspirant", "body spray"),
-    ),
-    # --- Chapter 30: Pharmaceuticals ---
-    TaricEntry(
-        "3004900000", "3004",
-        "Medicaments for therapeutic use",
-        ("medicine", "drug", "tablet", "capsule", "pharmaceutical", "vitamin", "supplement"),
-    ),
-    # --- Chapter 95: Toys ---
-    TaricEntry(
-        "9503000000", "9503",
-        "Toys",
-        ("toy", "game", "puzzle", "doll", "action figure", "board game"),
-    ),
-)
+# Use full EU catalog if available, otherwise fallback to minimal catalog
+if HAS_FULL_CATALOG:
+    DEFAULT_TARIC_CATALOG = FULL_TARIC_CATALOG
+else:
+    # Fallback minimal catalog if full_taric_catalog.py not available
+    DEFAULT_TARIC_CATALOG: tuple[TaricEntry, ...] = (
+        # --- Chapter 22: Beverages ---
+        TaricEntry(
+            "2201101100", "2201",
+            "Natural mineral waters, non-carbonated, not flavoured",
+            ("natural mineral water", "still mineral water", "mineral water",
+             "still water", "spring water", "water", "mineral", "drink"),
+        ),
+        TaricEntry(
+            "2201101900", "2201",
+            "Natural mineral waters, carbonated, not flavoured",
+            ("sparkling mineral water", "carbonated mineral water", "aerated water",
+             "sparkling water", "fizzy water"),
+        ),
+        TaricEntry(
+            "2202100000", "2202",
+            "Waters with added sugar, sweeteners or flavouring",
+            ("flavoured water", "sweetened water", "water drink"),
+        ),
+        TaricEntry(
+            "2202990000", "2202",
+            "Other non-alcoholic beverages",
+            ("energy drink", "soft drink", "soda", "cola", "lemonade", "isotonic", "monster", "red bull"),
+        ),
+        TaricEntry(
+            "2203000000", "2203",
+            "Beer made from malt",
+            ("beer", "ale", "lager", "pilsner", "stout"),
+        ),
+        TaricEntry(
+            "2204210000", "2204",
+            "Wine of fresh grapes, not sparkling, not fortified, <= 2L",
+            ("wine", "red wine", "white wine", "rose wine"),
+        ),
+        # --- Chapter 24: Tobacco / Vaping ---
+        TaricEntry(
+            "2404120000", "2404",
+            "Products for electronic cigarettes and similar devices, without nicotine",
+            ("vape", "e-liquid", "electronic cigarette", "e-cigarette", "vaping",
+             "liquid", "flavor shot", "flavour shot", "inhalation", "puff", "bar juice"),
+        ),
+        TaricEntry(
+            "2404110000", "2404",
+            "Products for electronic cigarettes and similar devices, with nicotine",
+            ("nicotine e-liquid", "nic salt", "nicotine vape", "vape nicotine"),
+        ),
+        TaricEntry(
+            "2402200000", "2402",
+            "Cigarettes containing tobacco",
+            ("cigarette", "tobacco cigarette", "smoking", "marlboro"),
+        ),
+        # --- Chapter 61/62: Clothing ---
+        TaricEntry(
+            "6105100000", "6105",
+            "Men's shirts of cotton, knitted or crocheted",
+            ("shirt", "mens", "cotton", "garment", "clothing", "t-shirt", "polo", "top"),
+        ),
+        TaricEntry(
+            "6109100000", "6109",
+            "T-shirts of cotton",
+            ("t-shirt", "tshirt", "top", "cotton top", "singlet"),
+        ),
+        TaricEntry(
+            "6203421100", "6203",
+            "Men's trousers of denim (jeans)",
+            ("jeans", "denim", "pants", "trousers", "denim pants"),
+        ),
+        TaricEntry(
+            "6203420000", "6203",
+            "Men's trousers of cotton",
+            ("trousers", "pants", "cotton pants"),
+        ),
+        TaricEntry(
+            "6402990500", "6402",
+            "Sports footwear (Sneakers)",
+            ("sneakers", "nike", "adidas", "shoes", "sports shoes", "athletic shoes"),
+        ),
+        # --- Chapter 84/85: Electronics ---
+        TaricEntry(
+            "8471300000", "8471",
+            "Portable automatic data processing machines (Laptops)",
+            ("laptop", "notebook", "computer", "macbook", "portable computer"),
+        ),
+        TaricEntry(
+            "8517130000", "8517",
+            "Smartphones (New Nomenclature)",
+            ("smartphone", "iphone", "samsung", "android phone"),
+        ),
+        TaricEntry(
+            "8517140000", "8517",
+            "Other wireless mobile phones",
+            ("mobile phone", "cell phone", "feature phone", "phone"),
+        ),
+        TaricEntry(
+            "8518300000", "8518",
+            "Headphones and earphones",
+            ("headphones", "airpods", "earbuds", "earphones", "headset"),
+        ),
+        TaricEntry(
+            "8542310000", "8542",
+            "Electronic integrated circuits",
+            ("chip", "semiconductor", "integrated circuit", "microchip", "cpu"),
+        ),
+        TaricEntry(
+            "8504400000", "8504",
+            "Power supply units and transformers",
+            ("power adapter", "charger", "transformer", "power supply"),
+        ),
+        # --- Chapter 33: Cosmetics ---
+        TaricEntry(
+            "3304990000", "3304",
+            "Beauty or make-up preparations",
+            ("makeup", "cosmetic", "foundation", "lipstick", "mascara", "skincare", "cream"),
+        ),
+        TaricEntry(
+            "3305100000", "3305",
+            "Shampoos",
+            ("shampoo", "hair wash", "hair shampoo"),
+        ),
+        TaricEntry(
+            "3307200000", "3307",
+            "Personal deodorants and antiperspirants",
+            ("deodorant", "antiperspirant", "body spray"),
+        ),
+        # --- Chapter 30: Pharmaceuticals ---
+        TaricEntry(
+            "3004900000", "3004",
+            "Medicaments for therapeutic use",
+            ("medicine", "drug", "pill", "tablet", "capsule", "pharmaceutical", "paracetamol"),
+        ),
+        TaricEntry(
+            "2106909200", "2106",
+            "Food supplements (Vitamins and minerals)",
+            ("vitamin", "supplement", "multivitamin", "dietary supplement"),
+        ),
+        # --- Chapter 95: Toys & Games ---
+        TaricEntry(
+            "9503000000", "9503",
+            "Toys and puzzles",
+            ("toy", "game", "puzzle", "doll", "action figure", "board game", "lego"),
+        ),
+        TaricEntry(
+            "9504500000", "9504",
+            "Video game consoles and equipment",
+            ("playstation", "xbox", "nintendo", "console", "video game", "switch"),
+        ),
+    )
 
 
 _TRANSLATIONS = {
     "ανδρ": "mens",
+    "γυναικ": "womens",
+    "παιδικ": "kids",
     "βαμβακερ": "cotton",
-    "πουκάμισ": "shirt",
-    "μακρυμάνικ": "long sleeve",
-    "φορητός υπολογιστής": "laptop",
-    "υπολογιστής": "computer",
-    "νερό": "water",
-    "μεταλλικό νερό": "mineral water",
-    "υγρό vape": "vape e-liquid",
-    "υγρό ηλεκτρονικού τσιγάρου": "vape e-liquid",
-    "ηλεκτρονικό τσιγάρο": "electronic cigarette",
+    "πουκαμισ": "shirt",
+    "μπλουζ": "t-shirt",
+    "παντελον": "trousers",
+    "τζιν": "jeans",
+    "μακρυμανικ": "long sleeve",
+    "κοντομανικ": "short sleeve",
+    "παπουτσ": "sneakers",
+    "αθλητικ": "sports shoes",
+    "λαπτοπ": "laptop",
+    "φορητος υπολογιστης": "laptop",
+    "υπολογιστης": "computer",
+    "κινητο": "smartphone",
+    "τηλεφων": "phone",
+    "smartphone": "smartphone",
+    "ακουστικ": "headphones",
+    "κονσολα": "console",
+    "νερο": "water",
+    "μεταλλικο νερο": "mineral water",
+    "ανθρακουχο": "carbonated",
+    "αναψυκτικ": "soft drink",
+    "ενεργειακο ποτο": "energy drink",
+    "χυμο": "juice",
+    "μπυρα": "beer",
+    "κρασι": "wine",
+    "σαμπουαν": "shampoo",
+    "καλλυντικ": "cosmetic",
+    "αποσμητικ": "deodorant",
+    "φαρμακ": "medicine",
+    "συμπληρωμα διατροφης": "supplement",
+    "βιταμιν": "vitamin",
+    "πολυβιταμιν": "multivitamin",
+    "πολυβιταμινη": "multivitamin",
+    "ηλεκτρονικο τσιγαρο": "electronic cigarette",
+    "τσιγαρο": "cigarette",
+    "υγρο vape": "vape e-liquid",
+    "υγρο ηλεκτρονικου τσιγαρου": "vape e-liquid",
+    "νικοτιν": "nicotine",
+    "nic salt": "nicotine salt",
+    "παιχνιδ": "toy",
+    "σφραγιδα": "stamp",
+    "μελανι": "ink",
+    "μελάνι": "ink",
+    "σφραγίδα": "stamp",
+    "trodat": "ink",
+    "αρωμα": "perfume",
+    "κολονια": "cologne",
+    "άρωμα": "perfume",
+    "κολόνια": "cologne",
 }
 
 
 def _debug(message: str) -> None:
     if os.getenv("BARCODE_TARIC_DEBUG") == "1":
         print(f"[debug] {message}", file=sys.stderr)
+
+
+def _load_dotenv(dotenv_path: Path = DOTENV_PATH) -> None:
+    if not dotenv_path.is_file():
+        return
+
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
 
 
 def _http_json(url: str, *, timeout: int = 12, method: str = "GET", body: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None) -> Any:
@@ -169,10 +291,48 @@ def _http_json(url: str, *, timeout: int = 12, method: str = "GET", body: Option
         return json.loads(response.read().decode("utf-8"))
 
 
-def _http_text(url: str, *, timeout: int = 12) -> str:
-    req = urllib.request.Request(url=url, headers={"User-Agent": "barcode-taric/1.0"})
+def _http_text(url: str, *, timeout: int = 12, headers: Optional[dict[str, str]] = None) -> str:
+    req_headers = {"User-Agent": "barcode-taric/1.0"}
+    if headers:
+        req_headers.update(headers)
+
+    req = urllib.request.Request(url=url, headers=req_headers)
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="ignore")
+
+
+def _extract_html_label_pairs(html_text: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for label, value in re.findall(r'<td[^>]*class=["\']metadata-label["\'][^>]*>([^<]+)</td>\s*<td>(.*?)</td>', html_text, re.S | re.I):
+        pairs[label.strip().lower()] = html.unescape(value.strip())
+    return pairs
+
+
+def _unescape_text(value: str) -> str:
+    return html.unescape(re.sub(r"\s+", " ", value.strip()))
+
+
+def _normalize_text_for_matching(text: str) -> str:
+    lowered = text.lower()
+    without_diacritics = "".join(
+        char for char in unicodedata.normalize("NFKD", lowered) if not unicodedata.combining(char)
+    )
+    normalized = re.sub(r"[^a-z0-9\s\-]", " ", without_diacritics)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _normalize_text_for_translation(text: str) -> str:
+    lowered = text.lower()
+    without_diacritics = "".join(
+        char for char in unicodedata.normalize("NFKD", lowered) if not unicodedata.combining(char)
+    )
+    # Keep Greek and Latin ranges so Greek -> English translations can be applied.
+    normalized = re.sub(r"[^a-z0-9\u0370-\u03ff\s\-]", " ", without_diacritics)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _tokenize_for_matching(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9\-]+", text)
 
 
 def normalize_to_ean13(code: str) -> Optional[str]:
@@ -313,9 +473,134 @@ def fetch_barcode_monster_product(barcode: str) -> dict[str, Any]:
     }
 
 
+def fetch_go_upc_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from Go-UPC by scraping the search results page."""
+    url = GOUNPC_SEARCH_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        html_text = _http_text(
+            url,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
+        )
+    except TimeoutError:
+        return {"source": "GoUPC", "found": False, "error": "timeout"}
+    except urllib.error.URLError:
+        return {"source": "GoUPC", "found": False, "error": "network_error"}
+
+    if "no product found" in html_text.lower() or "not found" in html_text.lower():
+        return {"source": "GoUPC", "found": False}
+
+    name_match = re.search(r'<h1[^>]*class=["\']product-name["\'][^>]*>(.*?)</h1>', html_text, re.S | re.I)
+    product_name = _unescape_text(name_match.group(1)) if name_match else None
+    pairs = _extract_html_label_pairs(html_text)
+    description_match = re.search(r'<h2>\s*Description\s*</h2>\s*<span>(.*?)</span>', html_text, re.S | re.I)
+    description = _unescape_text(description_match.group(1)) if description_match else None
+
+    if not product_name and not pairs:
+        return {"source": "GoUPC", "found": False}
+
+    return {
+        "source": "GoUPC",
+        "found": True,
+        "product_name": product_name,
+        "brand": pairs.get("brand"),
+        "categories": pairs.get("category"),
+        "description": description,
+    }
+
+
+def fetch_barcodelookup_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from BarcodeLookup.com by scraping the product page."""
+    url = BARCODELOOKUP_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        html_text = _http_text(
+            url,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
+        )
+    except TimeoutError:
+        return {"source": "BarcodeLookup", "found": False, "error": "timeout"}
+    except urllib.error.URLError as exc:
+        _debug(f"BarcodeLookup fetch failed: {exc}")
+        return {"source": "BarcodeLookup", "found": False, "error": "network_error"}
+
+    if "no product found" in html_text.lower() or "not found" in html_text.lower():
+        return {"source": "BarcodeLookup", "found": False}
+
+    title_match = re.search(r'<title>(.*?)</title>', html_text, re.S | re.I)
+    product_name = _unescape_text(title_match.group(1)) if title_match else None
+    if product_name:
+        product_name = re.sub(r"\s*[—-]\s*Barcode Lookup$", "", product_name, flags=re.I).strip()
+        if not product_name:
+            product_name = None
+
+    pairs = _extract_html_label_pairs(html_text)
+    description_match = re.search(r'<h2[^>]*>\s*Description\s*</h2>\s*<div[^>]*>(.*?)</div>', html_text, re.S | re.I)
+    description = _unescape_text(description_match.group(1)) if description_match else None
+
+    return {
+        "source": "BarcodeLookup",
+        "found": bool(product_name or pairs),
+        "product_name": product_name,
+        "brand": pairs.get("brand"),
+        "categories": pairs.get("category"),
+        "description": description,
+    }
+
+
+def fetch_ean_search_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from EAN Search by scraping the search results page."""
+    url = EAN_SEARCH_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        html_text = _http_text(
+            url,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
+        )
+    except TimeoutError:
+        return {"source": "EANSearch", "found": False, "error": "timeout"}
+    except urllib.error.URLError as exc:
+        _debug(f"EANSearch fetch failed: {exc}")
+        return {"source": "EANSearch", "found": False, "error": "network_error"}
+
+    lowered = html_text.lower()
+    if "no product found" in lowered or "no results found" in lowered or "no results" in lowered:
+        return {"source": "EANSearch", "found": False}
+
+    title_match = re.search(r'<title>(.*?)</title>', html_text, re.S | re.I)
+    product_name = _unescape_text(title_match.group(1)) if title_match else None
+    if product_name:
+        product_name = re.sub(r"\s*[—-]\s*EAN Search$", "", product_name, flags=re.I).strip()
+        product_name = re.sub(r"\s*[—-]\s*EAN\s*\d+$", "", product_name, flags=re.I).strip()
+        if not product_name:
+            product_name = None
+
+    pairs = _extract_html_label_pairs(html_text)
+    description = None
+    meta_desc = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', html_text, re.S | re.I)
+    if meta_desc:
+        description = _unescape_text(meta_desc.group(1))
+
+    return {
+        "source": "EANSearch",
+        "found": bool(product_name or pairs or description),
+        "product_name": product_name,
+        "brand": pairs.get("brand"),
+        "categories": pairs.get("category"),
+        "description": description,
+    }
+
+
 def fetch_product_multi_source(barcode: str) -> dict[str, Any]:
-    """Try OpenFoodFacts, UPC ItemDB, and Barcode Monster in order; return first hit."""
-    for fetcher in (fetch_openfoodfacts_product, fetch_upcitemdb_product, fetch_barcode_monster_product):
+    """Try OpenFoodFacts, UPC ItemDB, Barcode Monster, Go-UPC, EAN Search and BarcodeLookup in order; return first hit."""
+    for fetcher in (
+        fetch_openfoodfacts_product,
+        fetch_upcitemdb_product,
+        fetch_barcode_monster_product,
+        fetch_go_upc_product,
+        fetch_ean_search_product,
+        fetch_barcodelookup_product,
+    ):
         try:
             result = fetcher(barcode)
             if result.get("found"):
@@ -327,15 +612,21 @@ def fetch_product_multi_source(barcode: str) -> dict[str, Any]:
 
 
 def parser_rewrite_to_customs_text(text: str) -> str:
-    cleaned = re.sub(r"\s+", " ", text.strip().lower())
-    for source, target in _TRANSLATIONS.items():
+    cleaned = _normalize_text_for_translation(text)
+    for source, target in sorted(_TRANSLATIONS.items(), key=lambda item: len(item[0]), reverse=True):
         if source in cleaned:
             cleaned = cleaned.replace(source, target)
 
-    tokens = re.findall(r"[a-z0-9\-]+", cleaned)
-    stopwords = {"and", "or", "for", "with", "the", "των", "και", "σε", "με"}
-    tokens = [tok for tok in tokens if tok not in stopwords]
-    return " ".join(tokens)
+    tokens = _tokenize_for_matching(cleaned)
+    stopwords = {
+        "and", "or", "for", "with", "the", "a", "an", "of", "to", "in", "on",
+        "των", "και", "σε", "με", "απο", "για", "του", "της", "στο", "στη", "στον",
+    }
+    filtered = [tok for tok in tokens if tok not in stopwords and len(tok) > 1]
+
+    # Keep insertion order while removing duplicates to stabilize matching.
+    unique_tokens = list(dict.fromkeys(filtered))
+    return " ".join(unique_tokens)
 
 
 def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Optional[str]:
@@ -381,10 +672,33 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Opt
 
 
 def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG) -> Optional[TaricEntry]:
-    text = f" {customs_text.lower()} "
+    normalized_text = _normalize_text_for_matching(customs_text)
+    text = f" {normalized_text} "
+    query_tokens = set(_tokenize_for_matching(normalized_text))
+
     best: tuple[int, Optional[TaricEntry]] = (0, None)
     for entry in catalog:
-        score = sum(1 for keyword in entry.keywords if f" {keyword.lower()} " in text)
+        score = 0
+        normalized_description = _normalize_text_for_matching(entry.description)
+        for keyword in entry.keywords:
+            normalized_keyword = _normalize_text_for_matching(keyword)
+            keyword_tokens = _tokenize_for_matching(normalized_keyword)
+            if not keyword_tokens:
+                continue
+
+            if f" {normalized_keyword} " in text:
+                score += 4 + len(keyword_tokens)
+            else:
+                overlap = len(query_tokens.intersection(keyword_tokens))
+                score += overlap
+
+        # Disambiguate the nicotine/non-nicotine 2404 entries when query is explicit.
+        if "nicotine" in query_tokens:
+            if "with nicotine" in normalized_description:
+                score += 5
+            if "without nicotine" in normalized_description:
+                score -= 2
+
         if score > best[0]:
             best = (score, entry)
     return best[1]
