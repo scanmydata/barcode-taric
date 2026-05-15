@@ -25,9 +25,24 @@ try:
 except ImportError:
     HAS_FULL_CATALOG = False
 
+# Import product database module
+try:
+    from product_database import (
+        init_database, add_product, search_by_barcode, search_by_description,
+        get_all_products, export_database_to_json, import_database_from_json,
+        ProductRecord, DB_PATH
+    )
+    HAS_DATABASE = True
+except ImportError:
+    HAS_DATABASE = False
+
 OPENFOODFACTS_URL = "https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
 POLLINATIONS_URL = "https://text.pollinations.ai/{prompt}"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DUCKDUCKGO_AI_URL = os.getenv("DUCKDUCKGO_AI_URL", "")
+DEEPINFRA_URL = os.getenv("DEEPINFRA_URL", "")
+DEEPINFRA_MODEL = os.getenv("DEEPINFRA_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
+NERVE_URL = os.getenv("NERVE_URL", "")
 UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
 BARCODE_MONSTER_URL = "https://barcode.monster/api/{barcode}"
 BARCODELOOKUP_URL = "https://www.barcodelookup.com/{barcode}"
@@ -257,6 +272,23 @@ _TRANSLATIONS = {
 def _debug(message: str) -> None:
     if os.getenv("BARCODE_TARIC_DEBUG") == "1":
         print(f"[debug] {message}", file=sys.stderr)
+
+
+def _get_effective_ai_provider(provider: str) -> str:
+    if provider == "auto":
+        if os.getenv("OPENROUTER_API_KEY"):
+            return "openrouter"
+        if os.getenv("DEEPINFRA_API_KEY") or DEEPINFRA_URL:
+            return "deepinfra"
+        if DUCKDUCKGO_AI_URL:
+            return "duckduckgo"
+        return "pollinations"
+
+    if provider == "openrouter" and not os.getenv("OPENROUTER_API_KEY"):
+        _debug("OPENROUTER_API_KEY not set; falling back to pollinations")
+        return "pollinations"
+
+    return provider
 
 
 def _load_dotenv(dotenv_path: Path = DOTENV_PATH) -> None:
@@ -629,11 +661,35 @@ def parser_rewrite_to_customs_text(text: str) -> str:
     return " ".join(unique_tokens)
 
 
-def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Optional[str]:
+def _parse_ai_text_response(response: Any) -> Optional[str]:
+    if response is None:
+        return None
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, dict):
+        for key in ("text", "output", "answer", "response", "content"):
+            value = response.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if "choices" in response and isinstance(response["choices"], list):
+            choice = response["choices"][0]
+            if isinstance(choice, dict):
+                msg = choice.get("message") or choice
+                if isinstance(msg, dict):
+                    return _parse_ai_text_response(msg)
+                return _parse_ai_text_response(choice)
+        if "results" in response and isinstance(response["results"], list):
+            return _parse_ai_text_response(response["results"][0])
+    return None
+
+
+def ai_rewrite_to_customs_text(text: str, provider: str = "auto") -> Optional[str]:
+    provider = _get_effective_ai_provider(provider)
     prompt = (
-        "Rewrite this commercial product text into a concise customs-style description in English. "
-        "Return only the description: "
-        f"{text}"
+        "Rewrite this commercial product text into a concise customs-style description suitable for EU TARIC classification. "
+        "Focus on material, product use, nicotine status, beverage type and any relevant customs classification hints. "
+        "Return only the short classification description in English with no extra commentary. "
+        f"Product: {text}"
     )
 
     if provider == "none":
@@ -648,7 +704,8 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Opt
         if provider == "openrouter":
             api_key = os.getenv("OPENROUTER_API_KEY")
             if not api_key:
-                return None
+                _debug("OpenRouter key missing; falling back to pollinations")
+                return ai_rewrite_to_customs_text(text, provider="pollinations")
 
             payload = {
                 "model": "meta-llama/llama-3.3-70b-instruct:free",
@@ -662,13 +719,92 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "pollinations") -> Opt
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=20,
             )
-            return response["choices"][0]["message"]["content"].strip()
+            content = _parse_ai_text_response(response)
+            if content:
+                return content[:500]
+            _debug("OpenRouter response missing content; falling back to pollinations")
+            return ai_rewrite_to_customs_text(text, provider="pollinations")
+
+        if provider == "deepinfra":
+            if not DEEPINFRA_URL:
+                _debug("DeepInfra URL not configured; falling back to pollinations")
+                return ai_rewrite_to_customs_text(text, provider="pollinations")
+            payload = {
+                "model": DEEPINFRA_MODEL,
+                "prompt": prompt,
+                "temperature": 0,
+                "max_tokens": 150,
+            }
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("DEEPINFRA_API_KEY"):
+                headers["Authorization"] = f"Bearer {os.getenv('DEEPINFRA_API_KEY')}"
+            response = _http_json(DEEPINFRA_URL, method="POST", body=payload, headers=headers, timeout=25)
+            content = _parse_ai_text_response(response)
+            if content:
+                return content[:500]
+            _debug("DeepInfra response missing content; falling back to pollinations")
+            return ai_rewrite_to_customs_text(text, provider="pollinations")
+
+        if provider == "duckduckgo":
+            if not DUCKDUCKGO_AI_URL:
+                _debug("DuckDuckGo AI URL not configured; falling back to pollinations")
+                return ai_rewrite_to_customs_text(text, provider="pollinations")
+            payload = {"question": prompt}
+            response = _http_json(DUCKDUCKGO_AI_URL, method="POST", body=payload, headers={"Content-Type": "application/json"}, timeout=25)
+            content = _parse_ai_text_response(response)
+            if content:
+                return content[:500]
+            _debug("DuckDuckGo AI response missing content; falling back to pollinations")
+            return ai_rewrite_to_customs_text(text, provider="pollinations")
+
+        if provider == "nerve":
+            if not NERVE_URL:
+                _debug("Nerve URL not configured; falling back to pollinations")
+                return ai_rewrite_to_customs_text(text, provider="pollinations")
+            payload = {"prompt": prompt, "max_new_tokens": 150}
+            response = _http_json(NERVE_URL, method="POST", body=payload, headers={"Content-Type": "application/json"}, timeout=25)
+            content = _parse_ai_text_response(response)
+            if content:
+                return content[:500]
+            _debug("Nerve/Text-Generation response missing content; falling back to pollinations")
+            return ai_rewrite_to_customs_text(text, provider="pollinations")
 
     except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         _debug(f"AI rewrite failed ({provider}): {exc}")
+        if provider != "pollinations":
+            return ai_rewrite_to_customs_text(text, provider="pollinations")
         return None
 
     return None
+
+
+def search_products_by_description(search_text: str, ai_provider: str = "auto") -> list[dict[str, Any]]:
+    """Search database and web for products matching description, retrieve barcodes and TARIC codes."""
+    if not HAS_DATABASE:
+        _debug("Database not available for description search")
+        return []
+    
+    # First check local database for existing matches
+    db_results = search_by_description(search_text, limit=20)
+    results = []
+    
+    for record in db_results:
+        results.append({
+            "input": search_text,
+            "barcode": record.barcode,
+            "product_name": record.product_name,
+            "product_description": record.description,
+            "commercial_text": record.commercial_text,
+            "customs_text": record.customs_text,
+            "match": {
+                "taric_code": record.taric_code,
+                "hs4": record.hs4,
+                "description": record.taric_description,
+            },
+            "source": "database"
+        })
+    
+    return results
 
 
 def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG) -> Optional[TaricEntry]:
@@ -704,36 +840,44 @@ def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_
     return best[1]
 
 
-def resolve_item(item: str, *, ai_provider: str = "pollinations") -> dict[str, Any]:
+def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = True) -> dict[str, Any]:
     query = item.strip()
     normalized_barcode = normalize_to_ean13(query)
 
     source_data: dict[str, Any] = {}
     commercial_text = query
+    product_name = ""
+    product_description = ""
+    
     if normalized_barcode:
         source_data = fetch_product_multi_source(normalized_barcode)
         if source_data.get("found"):
+            product_name = source_data.get("product_name", "")
+            product_description = source_data.get("description", "")
             parts = [
-                source_data.get("product_name"),
+                product_name,
                 source_data.get("categories"),
                 source_data.get("brand"),
-                source_data.get("description"),
+                product_description,
             ]
             commercial_text = " ".join(
                 str(p) for p in parts if p and str(p) not in ("None", "")
             )
 
+    effective_provider = _get_effective_ai_provider(ai_provider)
     parser_text = parser_rewrite_to_customs_text(commercial_text)
-    ai_text = ai_rewrite_to_customs_text(commercial_text, provider=ai_provider)
+    ai_text = ai_rewrite_to_customs_text(commercial_text, provider=effective_provider)
     customs_text = parser_rewrite_to_customs_text(ai_text) if ai_text else parser_text
 
     match = best_taric_match(customs_text)
-
-    return {
+    
+    result = {
         "input": query,
         "barcode": normalized_barcode,
         "valid_ean13": is_valid_ean13(normalized_barcode) if normalized_barcode else False,
         "source": source_data or {"source": "direct_input"},
+        "product_name": product_name,
+        "product_description": product_description,
         "commercial_text": commercial_text,
         "customs_text": customs_text,
         "match": {
@@ -742,19 +886,78 @@ def resolve_item(item: str, *, ai_provider: str = "pollinations") -> dict[str, A
             "description": match.description if match else "No confident match",
         },
     }
+    
+    # Store in database if enabled (always store, even without TARIC match)
+    if store_in_db and HAS_DATABASE:
+        product = ProductRecord(
+            barcode=normalized_barcode,
+            product_name=product_name,
+            description=product_description,
+            commercial_text=commercial_text,
+            customs_text=customs_text,
+            taric_code=match.taric_code if match else None,
+            hs4=match.hs4 if match else None,
+            taric_description=match.description if match else "No confident match",
+            source=source_data.get("source", "api")
+        )
+        add_product(product)
+    
+    return result
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Match barcode or product description to TARIC code")
+    parser = argparse.ArgumentParser(description="Match barcode or product description to TARIC code (bidirectional search)")
     parser.add_argument("query", nargs="?", help="Single barcode or product description")
     parser.add_argument("--file", type=Path, help="Batch file with inputs (.txt/.csv/.xlsx)")
-    parser.add_argument("--ai-provider", choices=["pollinations", "openrouter", "none"], default="pollinations")
+    parser.add_argument(
+        "--ai-provider",
+        choices=["auto", "pollinations", "openrouter", "deepinfra", "duckduckgo", "nerve", "none"],
+        default="auto",
+    )
     parser.add_argument("--output", type=Path, default=Path("taric_output.json"), help="Output JSON path")
+    parser.add_argument("--mode", choices=["barcode", "description", "auto"], default="auto",
+                       help="Search mode: 'barcode' (13-digit search), 'description' (FTS), 'auto' (detect)")
+    parser.add_argument("--no-db", action="store_true", help="Disable database storage")
+    parser.add_argument("--export-db", action="store_true", help="Export database to JSON")
+    parser.add_argument("--import-db", type=Path, help="Import products from JSON")
+    parser.add_argument("--list-db", action="store_true", help="List all products in database (detailed view)")
+    parser.add_argument("--view-db", action="store_true", help="Alias for --list-db (view database)")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+    
+    # Handle database export/import/view operations
+    if args.export_db:
+        if HAS_DATABASE:
+            export_database_to_json()
+            return 0
+        else:
+            print("Database module not available", file=sys.stderr)
+            return 1
+    
+    if args.import_db:
+        if HAS_DATABASE and args.import_db.exists():
+            import_database_from_json(args.import_db)
+            return 0
+        else:
+            print(f"Cannot import: file not found or database unavailable", file=sys.stderr)
+            return 1
+    
+    # List/view database contents
+    if args.list_db or args.view_db:
+        if HAS_DATABASE:
+            from product_database import list_products_detailed
+            list_products_detailed()
+            return 0
+        else:
+            print("Database module not available", file=sys.stderr)
+            return 1
+    
+    # Initialize database if enabled
+    if HAS_DATABASE and not args.no_db:
+        init_database()
 
     items: list[str] = []
     if args.query:
@@ -770,7 +973,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("Provide a query or --file", file=sys.stderr)
         return 2
 
-    results = [resolve_item(item, ai_provider=args.ai_provider) for item in items]
+    results = []
+    for item in items:
+        # Auto-detect search mode or use specified mode
+        mode = args.mode
+        if mode == "auto":
+            normalized = normalize_to_ean13(item)
+            mode = "barcode" if normalized else "description"
+        
+        if mode == "barcode":
+            # Standard barcode lookup
+            result = resolve_item(item, ai_provider=args.ai_provider, store_in_db=not args.no_db)
+            results.append(result)
+        else:  # mode == "description"
+            # Description-based search
+            db_results = search_products_by_description(item, ai_provider=args.ai_provider)
+            if db_results:
+                results.extend(db_results)
+            else:
+                # If no database results, try as direct input for TARIC matching
+                result = resolve_item(item, ai_provider=args.ai_provider, store_in_db=not args.no_db)
+                results.append(result)
+    
     args.output.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(results, ensure_ascii=False, indent=2))
     print(f"Saved {len(results)} result(s) to {args.output}")

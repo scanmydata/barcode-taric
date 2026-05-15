@@ -1,3 +1,4 @@
+ python taric_lookup.py "4904530593260" 
 [
   {
     "input": "4904530593260",
@@ -22,3 +23,4 @@
     }
   }
 ]
+Saved 1 result(s) to taric_output.json 

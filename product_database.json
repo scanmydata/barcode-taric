@@ -1,0 +1,46 @@
+[
+  {
+    "barcode": "5901234123457",
+    "product_name": "Sauce chiltepin",
+    "description": "",
+    "commercial_text": "Sauce chiltepin Aceites de oliva La lumbre",
+    "customs_text": "sauce chiltepin aceites de oliva la lumbre",
+    "taric_code": null,
+    "hs4": null,
+    "taric_description": "No confident match",
+    "source": "OpenFoodFacts"
+  },
+  {
+    "barcode": null,
+    "product_name": "",
+    "description": "",
+    "commercial_text": "Corona Extra beer",
+    "customs_text": "corona extra beer",
+    "taric_code": "2203000000",
+    "hs4": "2203",
+    "taric_description": "Beer made from malt",
+    "source": "api"
+  },
+  {
+    "barcode": null,
+    "product_name": "",
+    "description": "",
+    "commercial_text": "white wine 2020",
+    "customs_text": "white wine 2020",
+    "taric_code": "2204210000",
+    "hs4": "2204",
+    "taric_description": "Wine of fresh grapes <= 2L",
+    "source": "api"
+  },
+  {
+    "barcode": null,
+    "product_name": "",
+    "description": "",
+    "commercial_text": "Mens cotton shirt XL",
+    "customs_text": "mens cotton shirt xl",
+    "taric_code": "6105100000",
+    "hs4": "6105",
+    "taric_description": "Men's shirts of cotton, knitted",
+    "source": "api"
+  }
+]
