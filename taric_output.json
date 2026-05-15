@@ -1,17 +1,24 @@
 [
   {
-    "input": "Stamp ink red",
-    "barcode": null,
-    "valid_ean13": false,
+    "input": "8000500020012",
+    "barcode": "8000500020012",
+    "valid_ean13": true,
     "source": {
-      "source": "direct_input"
+      "source": "OpenFoodFacts",
+      "found": true,
+      "product_name": "Maxi Kinder Surprise 150g Hotwheels",
+      "brand": "Ferrero, Kinder",
+      "categories": "Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux",
+      "description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique"
     },
-    "commercial_text": "Stamp ink red",
-    "customs_text": "stamp ink red",
+    "product_name": "Maxi Kinder Surprise 150g Hotwheels",
+    "product_description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
+    "commercial_text": "Maxi Kinder Surprise 150g Hotwheels Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux Ferrero, Kinder Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
+    "customs_text": "egg-shaped milk chocolate confection 150 containing plastic toy capsule easter egg",
     "match": {
-      "taric_code": "3210000000",
-      "hs4": "3210",
-      "description": "Printing inks and preparations"
+      "taric_code": "1704100010",
+      "hs4": "1704",
+      "description": "Sugar confectionery - Sweets"
     }
   }
 ]

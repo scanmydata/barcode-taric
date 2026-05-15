@@ -1,0 +1,13 @@
+# TARIC Barcode Lookup Tool - Dependencies
+
+# Web Framework
+Flask==3.0.0
+
+# HTTP Requests
+requests==2.31.0
+
+# Encryption & Security
+cryptography==41.0.7
+
+# Environment Variables (optional but recommended)
+python-dotenv==1.0.0

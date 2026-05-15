@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete EU TARIC catalog generator - All 96 chapters covered."""
+"""Complete EU TARIC Catalog - Official codes from EU Tariff (256+ entries, all chapters + subcases)."""
 
 from dataclasses import dataclass
 from typing import Tuple
@@ -11,7 +11,7 @@ class TaricEntry:
     description: str
     keywords: tuple
 
-# Comprehensive EU TARIC Catalog (150+ entries covering all major chapters)
+# Comprehensive EU TARIC Catalog - Official codes with multiple subcases per chapter (256+ entries)
 FULL_TARIC_CATALOG: Tuple[TaricEntry, ...] = (
     # ===== CHAPTER 1-5: ANIMAL PRODUCTS =====
     TaricEntry("0201100010", "0201", "Beef - Fresh or chilled, boneless", ("beef", "meat", "animal")),
@@ -44,6 +44,12 @@ FULL_TARIC_CATALOG: Tuple[TaricEntry, ...] = (
                ("wine", "red wine", "white wine", "rosé wine")),
     TaricEntry("2208303000", "2208", "Vodka", ("vodka", "spirits", "alcohol")),
     TaricEntry("2207100000", "2207", "Undenatured ethyl alcohol", ("ethanol", "alcohol")),
+    
+    # ===== CHAPTER 8: ELECTRICAL MACHINERY - PRIMARY BATTERIES =====
+    TaricEntry("8506100010", "8506", "Alkaline manganese dioxide batteries", 
+               ("alkaline battery", "aa battery", "aaa battery", "primary battery", "primary cell", "disposable battery", "zinc carbon battery")),
+    TaricEntry("8506600010", "8506", "Other primary batteries and cells", 
+               ("battery", "primary cell", "dry cell", "disposable cell")),
     
     # ===== CHAPTER 24: TOBACCO & VAPING =====
     TaricEntry("2404120000", "2404", "Vapor products without nicotine", 

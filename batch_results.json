@@ -1,0 +1,97 @@
+[
+  {
+    "input": "5901234123457",
+    "barcode": "5901234123457",
+    "valid_ean13": true,
+    "source": {
+      "source": "OpenFoodFacts",
+      "found": true,
+      "product_name": "Sauce chiltepin",
+      "brand": "La lumbre",
+      "categories": "Aceites de oliva",
+      "description": ""
+    },
+    "product_name": "Sauce chiltepin",
+    "product_description": "",
+    "commercial_text": "Sauce chiltepin Aceites de oliva La lumbre",
+    "customs_text": "sauce chiltepin aceites de oliva la lumbre",
+    "match": {
+      "taric_code": null,
+      "hs4": null,
+      "description": "No confident match"
+    }
+  },
+  {
+    "input": "beer",
+    "barcode": null,
+    "valid_ean13": false,
+    "source": {
+      "source": "direct_input"
+    },
+    "product_name": "",
+    "product_description": "",
+    "commercial_text": "beer",
+    "customs_text": "beer",
+    "match": {
+      "taric_code": "2203000000",
+      "hs4": "2203",
+      "description": "Beer made from malt"
+    }
+  },
+  {
+    "input": "wine",
+    "barcode": null,
+    "valid_ean13": false,
+    "source": {
+      "source": "direct_input"
+    },
+    "product_name": "",
+    "product_description": "",
+    "commercial_text": "wine",
+    "customs_text": "wine",
+    "match": {
+      "taric_code": "2204210000",
+      "hs4": "2204",
+      "description": "Wine of fresh grapes <= 2L"
+    }
+  },
+  {
+    "input": "cotton shirt",
+    "barcode": null,
+    "valid_ean13": false,
+    "source": {
+      "source": "direct_input"
+    },
+    "product_name": "",
+    "product_description": "",
+    "commercial_text": "cotton shirt",
+    "customs_text": "cotton shirt",
+    "match": {
+      "taric_code": "6105100000",
+      "hs4": "6105",
+      "description": "Men's shirts of cotton, knitted"
+    }
+  },
+  {
+    "input": "4006381333931",
+    "barcode": "4006381333931",
+    "valid_ean13": true,
+    "source": {
+      "source": "OpenFoodFacts",
+      "found": true,
+      "product_name": "Test Shopidoo",
+      "brand": null,
+      "categories": "Gels",
+      "description": null
+    },
+    "product_name": "Test Shopidoo",
+    "product_description": null,
+    "commercial_text": "Test Shopidoo Gels",
+    "customs_text": "test shopidoo gels",
+    "match": {
+      "taric_code": null,
+      "hs4": null,
+      "description": "No confident match"
+    }
+  }
+]

@@ -34,7 +34,7 @@ def lookup_barcode(barcode):
                 
                 # Now lookup TARIC for this product using AI
                 lookup_text = f"{title} {category} {brand}"
-                result = resolve_item(lookup_text, ai_provider="openrouter")
+                result = resolve_item(lookup_text, ai_provider="auto")
                 
                 print(f"\n📦 TARIC Classification:")
                 if result.get('match') and result['match'].get('taric_code'):

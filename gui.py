@@ -4,15 +4,19 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from typing import Any
 import urllib.error
+import webbrowser
 
 from taric_lookup import load_inputs, resolve_item
+from web_app import app as web_app_app
 
 _MAX_PRODUCT_LABEL_LEN = 60
 
@@ -27,6 +31,7 @@ class BarcodeApp(tk.Tk):
         self.resizable(True, True)
         self._results: list[dict[str, Any]] = []
         self._queue: queue.Queue[list[dict[str, Any]] | Exception] = queue.Queue()
+        self._status_var = tk.StringVar(value="Ready")
         self._build_ui()
         self._poll_queue()
 
@@ -76,11 +81,11 @@ class BarcodeApp(tk.Tk):
         ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
         ttk.Label(btn_frame, text="AI Provider:").pack(side=tk.LEFT, padx=(0, 4))
-        self._ai_provider = tk.StringVar(value="pollinations")
+        self._ai_provider = tk.StringVar(value="auto")
         provider_cb = ttk.Combobox(
             btn_frame,
             textvariable=self._ai_provider,
-            values=["pollinations", "openrouter", "none"],
+            values=["auto", "pollinations", "openrouter", "deepinfra", "duckduckgo", "nerve", "none"],
             state="readonly",
             width=14,
         )
@@ -88,6 +93,8 @@ class BarcodeApp(tk.Tk):
 
         self._search_btn = ttk.Button(btn_frame, text="🔍  Search TARIC Codes", command=self._on_search)
         self._search_btn.pack(side=tk.LEFT)
+
+        self._status_var.set("Ready — Web UI will also launch on startup")
 
         self._progress = ttk.Progressbar(btn_frame, mode="indeterminate", length=120)
         self._progress.pack(side=tk.LEFT, padx=(8, 0))
@@ -129,7 +136,6 @@ class BarcodeApp(tk.Tk):
         ttk.Button(export_frame, text="Export JSON…", command=self._on_export).pack(side=tk.LEFT)
 
     def _build_status_bar(self) -> None:
-        self._status_var = tk.StringVar(value="Ready")
         bar = ttk.Label(self, textvariable=self._status_var, relief=tk.SUNKEN, anchor=tk.W)
         bar.grid(row=2, column=0, sticky="ew", padx=0, pady=0)
 
@@ -294,7 +300,20 @@ def _format_taric(code: str) -> str:
     return code
 
 
+def _launch_web_ui() -> None:
+    def run_server() -> None:
+        web_app_app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+
+    threading.Thread(target=run_server, daemon=True).start()
+    time.sleep(1)
+    try:
+        webbrowser.open("http://127.0.0.1:5000")
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _launch_web_ui()
     app = BarcodeApp()
     app.mainloop()
 
