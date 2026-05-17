@@ -14,45 +14,9 @@ class TaricEntry:
 # Comprehensive EU TARIC Catalog - Official codes with multiple subcases per chapter (114+ entries)
 FULL_TARIC_CATALOG: Tuple[TaricEntry, ...] = (
 
-    # ===== CHAPTER 20: PREPARATIONS OF FRUIT AND VEGETABLES =====
-    TaricEntry("2009110000", "2009", "Orange juice, frozen",
-               ("orange juice", "frozen juice", "citrus juice", "fruit juice", "2009")),
-    TaricEntry("2009120000", "2009", "Orange juice, not frozen",
-               ("orange juice", "citrus juice", "fruit juice", "fresh juice", "2009")),
-    TaricEntry("2009190000", "2009", "Other citrus juice",
-               ("citrus juice", "lemon juice", "grapefruit juice", "fruit juice", "2009")),
-    TaricEntry("2009210000", "2009", "Grapefruit juice",
-               ("grapefruit juice", "citrus juice", "fruit juice", "2009")),
-    TaricEntry("2009310000", "2009", "Lemon juice",
-               ("lemon juice", "citrus juice", "fruit juice", "2009")),
-    TaricEntry("2009390000", "2009", "Other citrus juice",
-               ("citrus juice", "lime juice", "fruit juice", "2009")),
-    TaricEntry("2009410000", "2009", "Pineapple juice",
-               ("pineapple juice", "tropical juice", "fruit juice", "2009")),
-    TaricEntry("2009490000", "2009", "Other pineapple juice",
-               ("pineapple juice", "tropical juice", "fruit juice", "2009")),
-    TaricEntry("2009500000", "2009", "Tomato juice",
-               ("tomato juice", "vegetable juice", "2009")),
-    TaricEntry("2009610000", "2009", "Grape juice",
-               ("grape juice", "fruit juice", "2009")),
-    TaricEntry("2009690000", "2009", "Other grape juice",
-               ("grape juice", "fruit juice", "wine grape juice", "2009")),
-    TaricEntry("2009710000", "2009", "Apple juice",
-               ("apple juice", "fruit juice", "cider juice", "2009")),
-    TaricEntry("2009790000", "2009", "Other apple juice",
-               ("apple juice", "fruit juice", "2009")),
-    TaricEntry("2009810000", "2009", "Cranberry juice",
-               ("cranberry juice", "berry juice", "fruit juice", "2009")),
-    TaricEntry("2009890000", "2009", "Other fruit or vegetable juice",
-               ("fruit juice", "vegetable juice", "mango juice", "pear juice", "peach juice", "banana juice", "cherry juice", "mixed juice", "2009")),
-    TaricEntry("2009900000", "2009", "Mixtures of fruit or vegetable juices",
-               ("mixed juice", "fruit blend", "juice mixture", "multifruit juice", "fruit juice", "2009")),
-
     # ===== CHAPTER 21: MISCELLANEOUS FOOD PREPARATIONS =====
     TaricEntry("2106909200", "2106", "Food supplements (Vitamins and minerals)",
                ("vitamin", "supplement", "multivitamin", "dietary supplement", "vitamins", "minerals", "omega-3", "probiotic", "2106")),
-    TaricEntry("2106909800", "2106", "Food preparations not elsewhere specified",
-               ("food preparation", "flavor concentrate", "flavoring", "flavouring", "aroma", "essence", "syrup base", "beverage base", "drink mix", "powdered drink", "concentrate", "pear flavor", "fruit flavor", "food additive", "2106")),
 
     # ===== CHAPTER 22: BEVERAGES, VINEGAR =====
     TaricEntry("2201101100", "2201", "Natural mineral waters, non-carbonated, not flavoured",
@@ -128,7 +92,7 @@ FULL_TARIC_CATALOG: Tuple[TaricEntry, ...] = (
     TaricEntry("2404110000", "2404", "Vapor products with nicotine",
                ("nicotine vape", "nic salt", "nicotine e-liquid", "vape juice with nicotine", "e-cigarette liquid", "vaping with nicotine", "nicotine", "2404")),
     TaricEntry("2404120000", "2404", "Vapor products without nicotine",
-               ("vape", "e-liquid", "electronic cigarette", "e-cigarette", "puff", "vape bar juice", "vape juice", "zero nicotine", "without nicotine", "no nicotine", "nicotine free", "vaping", "2404")),
+               ("vape", "e-liquid", "electronic cigarette", "e-cigarette", "puff", "bar juice", "vape juice", "zero nicotine", "without nicotine", "no nicotine", "nicotine free", "vaping", "2404")),
     TaricEntry("2404900000", "2404", "Other vapor products",
                ("vapor product", "inhalation product", "aerosol", "2404")),
 

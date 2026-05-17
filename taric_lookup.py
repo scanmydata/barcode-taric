@@ -39,8 +39,8 @@ except ImportError:
 OPENFOODFACTS_URL = "https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
 POLLINATIONS_URL = "https://text.pollinations.ai/{prompt}"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DUCKDUCKGO_AI_URL = os.getenv("DUCKDUCKGO_AI_URL", "")
-DEEPINFRA_URL = os.getenv("DEEPINFRA_URL", "")
+DUCKDUCKGO_AI_URL = os.getenv("DUCKDUCKGO_AI_URL", "https://duckduckgo.com/duckchat/v1/chat")
+DEEPINFRA_URL = os.getenv("DEEPINFRA_URL", "https://api.deepinfra.com/v1/openai/chat/completions")
 DEEPINFRA_MODEL = os.getenv("DEEPINFRA_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
 NERVE_URL = os.getenv("NERVE_URL", "")
 UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
@@ -48,6 +48,10 @@ BARCODE_MONSTER_URL = "https://barcode.monster/api/{barcode}"
 BARCODELOOKUP_URL = "https://www.barcodelookup.com/{barcode}"
 GOUNPC_SEARCH_URL = "https://go-upc.com/search?q={barcode}"
 EAN_SEARCH_URL = "https://www.ean-search.org/?q={barcode}"
+WAVEGROCERY_PRODUCTS_SEARCH_URL = os.getenv(
+    "WAVEGROCERY_PRODUCTS_SEARCH_URL",
+    "https://thanopoulos.api.wavegrocery.com/api/v3.1/products/search?term={barcode}",
+)
 DOTENV_PATH = Path(".env")
 
 
@@ -278,6 +282,18 @@ _TRANSLATIONS = {
     "κολονια": "cologne",
     "άρωμα": "perfume",
     "κολόνια": "cologne",
+    "χαρτι υγειας": "toilet paper",
+    "χαρτί υγείας": "toilet paper",
+    "χαρτι": "paper",
+    "χαρτί": "paper",
+    "υγειας": "toilet",
+    "υγείας": "toilet",
+    "ρολο": "roll",
+    "ρολό": "roll",
+    "φυλλων": "ply",
+    "φύλλων": "ply",
+    "4φυλλο": "4-ply",
+    "4φύλλο": "4-ply",
 }
 
 
@@ -288,12 +304,12 @@ def _debug(message: str) -> None:
 
 def _get_effective_ai_provider(provider: str) -> str:
     if provider == "auto":
+        if DUCKDUCKGO_AI_URL:
+            return "duckduckgo"
         if os.getenv("OPENROUTER_API_KEY"):
             return "openrouter"
         if os.getenv("DEEPINFRA_API_KEY") or DEEPINFRA_URL:
             return "deepinfra"
-        if DUCKDUCKGO_AI_URL:
-            return "duckduckgo"
         return "pollinations"
 
     if provider == "openrouter" and not os.getenv("OPENROUTER_API_KEY"):
@@ -379,6 +395,14 @@ def _tokenize_for_matching(text: str) -> list[str]:
     return re.findall(r"[a-z0-9\-]+", text)
 
 
+def _contains_greek(text: Optional[str]) -> bool:
+    return bool(text and re.search(r"[\u0370-\u03FF]", text))
+
+
+def _contains_latin(text: Optional[str]) -> bool:
+    return bool(text and re.search(r"[A-Za-z]", text))
+
+
 def normalize_to_ean13(code: str) -> Optional[str]:
     digits = re.sub(r"\D", "", code)
     if len(digits) == 13:
@@ -462,6 +486,39 @@ def fetch_openfoodfacts_product(barcode: str) -> dict[str, Any]:
         "brand": product.get("brands"),
         "categories": product.get("categories"),
         "description": product.get("generic_name"),
+    }
+
+
+def fetch_wavegrocery_product(barcode: str) -> dict[str, Any]:
+    """Fetch product data from public WaveGrocery search endpoint (Thanopoulos default)."""
+    url = WAVEGROCERY_PRODUCTS_SEARCH_URL.format(barcode=urllib.parse.quote(barcode))
+    try:
+        payload = _http_json(url, timeout=12, headers={"appId": "thanopoulos-web"})
+    except TimeoutError:
+        return {"source": "WaveGrocery", "found": False, "error": "timeout"}
+    except urllib.error.URLError:
+        return {"source": "WaveGrocery", "found": False, "error": "network_error"}
+    except json.JSONDecodeError:
+        return {"source": "WaveGrocery", "found": False, "error": "invalid_response"}
+
+    products = (payload or {}).get("data", {}).get("products") or []
+    if not products:
+        return {"source": "WaveGrocery", "found": False}
+
+    product = products[0]
+    product_name = str(product.get("name") or "").strip()
+    quantity = str(product.get("quantity") or "").strip()
+    description = str(product.get("displayDescription") or "").strip()
+    if not description:
+        description = " ".join(part for part in (product_name, quantity) if part).strip()
+
+    return {
+        "source": "WaveGrocery",
+        "found": True,
+        "product_name": product_name,
+        "brand": product.get("brand"),
+        "categories": ", ".join(product.get("collectionTypes") or []) if isinstance(product.get("collectionTypes"), list) else None,
+        "description": description,
     }
 
 
@@ -635,8 +692,13 @@ def fetch_ean_search_product(barcode: str) -> dict[str, Any]:
     }
 
 
-def fetch_product_multi_source(barcode: str) -> dict[str, Any]:
+def fetch_product_multi_source(barcode: str, *, ai_provider: str = "auto") -> dict[str, Any]:
     """Try OpenFoodFacts, UPC ItemDB, Barcode Monster, Go-UPC, EAN Search and BarcodeLookup in order; return first hit."""
+    ai_primary = ai_infer_product_from_web(barcode, provider=ai_provider)
+    if ai_primary and ai_primary.get("found"):
+        _debug(f"Product inferred via AI web primary for {barcode}")
+        return ai_primary
+
     for fetcher in (
         fetch_openfoodfacts_product,
         fetch_upcitemdb_product,
@@ -652,6 +714,7 @@ def fetch_product_multi_source(barcode: str) -> dict[str, Any]:
                 return result
         except Exception as exc:
             _debug(f"{fetcher.__name__} raised: {exc}")
+
     return {"source": "none", "found": False}
 
 
@@ -744,7 +807,7 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "auto") -> Optional[st
                 return ai_rewrite_to_customs_text(text, provider="pollinations")
             payload = {
                 "model": DEEPINFRA_MODEL,
-                "prompt": prompt,
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0,
                 "max_tokens": 150,
             }
@@ -786,6 +849,420 @@ def ai_rewrite_to_customs_text(text: str, provider: str = "auto") -> Optional[st
         _debug(f"AI rewrite failed ({provider}): {exc}")
         if provider != "pollinations":
             return ai_rewrite_to_customs_text(text, provider="pollinations")
+        return None
+
+    return None
+
+
+def ai_translate_text(text: str, *, target_language: str, provider: str = "auto") -> Optional[str]:
+    provider = _get_effective_ai_provider(provider)
+    if provider == "none" or not text.strip():
+        return None
+
+    language_label = "Greek" if target_language.lower().startswith("el") else "English"
+    prompt = (
+        f"Translate the following product text to {language_label}. "
+        "Keep product names and brands unchanged when appropriate. "
+        "Return only the translated text with no extra commentary. "
+        f"Text: {text}"
+    )
+
+    try:
+        if provider == "pollinations":
+            encoded = urllib.parse.quote(prompt)
+            response = _http_text(POLLINATIONS_URL.format(prompt=encoded), timeout=18).strip()
+            return response[:450] if response else None
+
+        if provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                return None
+            payload = {
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+            }
+            response = _http_json(
+                OPENROUTER_URL,
+                method="POST",
+                body=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=20,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:450] if content else None
+
+        if provider == "deepinfra":
+            if not DEEPINFRA_URL:
+                return None
+            payload = {
+                "model": DEEPINFRA_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 220,
+            }
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("DEEPINFRA_API_KEY"):
+                headers["Authorization"] = f"Bearer {os.getenv('DEEPINFRA_API_KEY')}"
+            response = _http_json(DEEPINFRA_URL, method="POST", body=payload, headers=headers, timeout=25)
+            content = _parse_ai_text_response(response)
+            return content[:450] if content else None
+
+        if provider == "duckduckgo":
+            if not DUCKDUCKGO_AI_URL:
+                return None
+            response = _http_json(
+                DUCKDUCKGO_AI_URL,
+                method="POST",
+                body={"question": prompt},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:450] if content else None
+
+        if provider == "nerve":
+            if not NERVE_URL:
+                return None
+            response = _http_json(
+                NERVE_URL,
+                method="POST",
+                body={"prompt": prompt, "max_new_tokens": 220},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:450] if content else None
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        _debug(f"AI translation failed ({provider}): {exc}")
+        return None
+
+    return None
+
+
+def _duckduckgo_web_search_context(query: str, *, limit: int = 5) -> str:
+    search_url = "https://html.duckduckgo.com/html/?q={query}".format(query=urllib.parse.quote(query))
+    try:
+        html_text = _http_text(
+            search_url,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"},
+        )
+    except (urllib.error.URLError, TimeoutError):
+        return ""
+
+    items: list[str] = []
+    result_blocks = re.findall(r'<div[^>]*class=["\']result["\'][^>]*>(.*?)</div>\s*</div>', html_text, re.S | re.I)
+    for block in result_blocks[:limit]:
+        title_match = re.search(r'class=["\']result__a["\'][^>]*>(.*?)</a>', block, re.S | re.I)
+        snippet_match = re.search(r'class=["\']result__snippet["\'][^>]*>(.*?)</a>|class=["\']result__snippet["\'][^>]*>(.*?)</div>', block, re.S | re.I)
+        title = _unescape_text(re.sub(r"<[^>]+>", " ", title_match.group(1))) if title_match else ""
+        snippet_raw = ""
+        if snippet_match:
+            snippet_raw = snippet_match.group(1) or snippet_match.group(2) or ""
+        snippet = _unescape_text(re.sub(r"<[^>]+>", " ", snippet_raw)) if snippet_raw else ""
+        line = " - ".join(part for part in (title, snippet) if part)
+        if line:
+            items.append(line)
+
+    return "\n".join(items)
+
+
+def _looks_low_quality_product_name(name: str, *, description: str = "", brand: str = "") -> bool:
+    normalized = _normalize_text_for_matching(name)
+    if not normalized:
+        return True
+
+    tokens = [tok for tok in re.split(r"\s+", normalized) if tok]
+    if len(tokens) >= 14:
+        return True
+
+    spam_tokens = {
+        "women", "woman", "men", "man", "dark", "circle", "blemishes", "cover", "kit", "set",
+        "skin", "care", "cosmetics", "makeup", "health", "beauty", "personal",
+    }
+    spam_hits = sum(1 for tok in tokens if tok in spam_tokens)
+    if spam_hits >= 5:
+        return True
+
+    if description:
+        norm_desc = _normalize_text_for_matching(description)
+        if norm_desc and normalized == norm_desc:
+            return True
+
+    if brand:
+        norm_brand = _normalize_text_for_matching(brand)
+        if norm_brand and norm_brand in normalized and len(tokens) > 10:
+            return True
+
+    return False
+
+
+def _derive_fallback_product_name(*, brand: str = "", description: str = "", categories: str = "") -> str:
+    descriptor = ""
+    if description:
+        blocked = {
+            "women", "woman", "men", "man", "dark", "circle", "blemishes", "cover", "kit", "set",
+            "skin", "care", "cosmetics", "makeup", "health", "beauty", "personal", "for", "with", "and",
+        }
+        raw_tokens = re.findall(r"[A-Za-z0-9\u0370-\u03FF\u1F00-\u1FFF]+", description)
+        keep_tokens = [tok for tok in raw_tokens if _normalize_text_for_matching(tok) not in blocked]
+        descriptor = " ".join(keep_tokens[:3]).strip()
+
+    if not descriptor and categories:
+        leaf = categories.split(">")[-1].strip()
+        descriptor = leaf
+
+    if brand and descriptor:
+        if _normalize_text_for_matching(brand) in _normalize_text_for_matching(descriptor):
+            return descriptor
+        return f"{brand} {descriptor}".strip()
+    return (brand or descriptor or "").strip()
+
+
+def _sanitize_product_name(name: str, *, brand: str = "", description: str = "", categories: str = "") -> str:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        return ""
+    if not _looks_low_quality_product_name(clean_name, description=description, brand=brand):
+        return clean_name
+    fallback = _derive_fallback_product_name(brand=brand, description=description, categories=categories)
+    return fallback or ""
+
+
+def ai_infer_product_from_web(barcode: str, provider: str = "auto") -> Optional[dict[str, Any]]:
+    provider = _get_effective_ai_provider(provider)
+    if provider == "none":
+        return None
+
+    web_context = _duckduckgo_web_search_context(barcode, limit=6)
+    if web_context:
+        prompt = (
+            "You are given web search snippets for a barcode. Infer likely product metadata. "
+            "Return ONLY valid JSON with keys: product_name, brand, categories, description, confidence. "
+            "Description should be in English and concise. If uncertain, keep fields empty strings and confidence='low'. "
+            f"Barcode: {barcode}\n"
+            f"Web snippets:\n{web_context}"
+        )
+    else:
+        prompt = (
+            "Infer likely product metadata for this barcode. "
+            "If your runtime supports web search/browsing, use it before answering. "
+            "Return ONLY valid JSON with keys: product_name, brand, categories, description, confidence. "
+            "If uncertain, keep fields empty strings and confidence='low'. "
+            f"Barcode: {barcode}"
+        )
+
+    try:
+        if provider == "pollinations":
+            encoded = urllib.parse.quote(prompt)
+            response = _http_text(POLLINATIONS_URL.format(prompt=encoded), timeout=20).strip()
+        elif provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                return None
+            payload = {
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+            }
+            response = _http_json(
+                OPENROUTER_URL,
+                method="POST",
+                body=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=20,
+            )
+            response = _parse_ai_text_response(response)
+        elif provider == "deepinfra":
+            if not DEEPINFRA_URL:
+                return None
+            payload = {
+                "model": DEEPINFRA_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 260,
+            }
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("DEEPINFRA_API_KEY"):
+                headers["Authorization"] = f"Bearer {os.getenv('DEEPINFRA_API_KEY')}"
+            response = _http_json(DEEPINFRA_URL, method="POST", body=payload, headers=headers, timeout=25)
+            response = _parse_ai_text_response(response)
+        elif provider == "duckduckgo":
+            if not DUCKDUCKGO_AI_URL:
+                return None
+            response = _http_json(
+                DUCKDUCKGO_AI_URL,
+                method="POST",
+                body={"question": prompt},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            response = _parse_ai_text_response(response)
+        elif provider == "nerve":
+            if not NERVE_URL:
+                return None
+            response = _http_json(
+                NERVE_URL,
+                method="POST",
+                body={"prompt": prompt, "max_new_tokens": 260},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            response = _parse_ai_text_response(response)
+        else:
+            return None
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        _debug(f"AI web infer failed ({provider}): {exc}")
+        return None
+
+    if not response:
+        return None
+
+    raw_text = response.strip()
+    raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.I | re.S)
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    name = str(parsed.get("product_name") or "").strip()
+    desc = str(parsed.get("description") or "").strip()
+    brand = str(parsed.get("brand") or "").strip()
+    categories = str(parsed.get("categories") or "").strip()
+    confidence = str(parsed.get("confidence") or "").strip().lower()
+    if not name and not desc:
+        return None
+    if confidence in {"low", "very_low", "unknown"} and not web_context:
+        return None
+
+    if name and _looks_low_quality_product_name(name, description=desc, brand=brand):
+        _debug(f"Discarding low-quality AI inferred product name for {barcode}: {name!r}")
+        name = ""
+
+    if not name and not desc:
+        return None
+
+    return {
+        "source": "AIWebSearch",
+        "found": True,
+        "product_name": name,
+        "brand": brand or None,
+        "categories": categories or None,
+        "description": desc,
+        "confidence": str(parsed.get("confidence") or "").strip() or None,
+        "web_context_used": bool(web_context),
+    }
+
+
+def _is_placeholder_description(value: Optional[str]) -> bool:
+    if not value:
+        return True
+    normalized = _normalize_text_for_matching(value)
+    placeholder_patterns = {
+        "no description",
+        "description not found",
+        "not found",
+        "unknown",
+        "n a",
+        "na",
+    }
+    if len(normalized) < 12:
+        return True
+    return any(pattern in normalized for pattern in placeholder_patterns)
+
+
+def ai_enrich_product_description_greek(
+    *,
+    product_name: str,
+    brand: Optional[str],
+    categories: Optional[str],
+    barcode: Optional[str],
+    provider: str = "auto",
+) -> Optional[str]:
+    provider = _get_effective_ai_provider(provider)
+    if provider == "none":
+        return None
+
+    prompt = (
+        "Δημιούργησε μία φυσική εμπορική περιγραφή στα ελληνικά για προϊόν λιανικής. "
+        "Χρησιμοποίησε τα διαθέσιμα στοιχεία (όνομα, μάρκα, κατηγορία, barcode). "
+        "Αν φαίνεται ότι είναι ποτό, πρόσθεσε πιθανό τύπο και συσκευασία (π.χ. 750ml) μόνο αν είναι λογικό. "
+        "Δώσε 1 πρόταση, χωρίς markdown, χωρίς bullets, χωρίς αποποίηση ευθύνης. "
+        f"Όνομα: {product_name or ''} | Μάρκα: {brand or ''} | Κατηγορία: {categories or ''} | Barcode: {barcode or ''}"
+    )
+
+    try:
+        if provider == "pollinations":
+            encoded = urllib.parse.quote(prompt)
+            response = _http_text(POLLINATIONS_URL.format(prompt=encoded), timeout=18).strip()
+            return response[:350] if response else None
+
+        if provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                return None
+            payload = {
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+            }
+            response = _http_json(
+                OPENROUTER_URL,
+                method="POST",
+                body=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=20,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:350] if content else None
+
+        if provider == "deepinfra":
+            if not DEEPINFRA_URL:
+                return None
+            payload = {
+                "model": DEEPINFRA_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 180,
+            }
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("DEEPINFRA_API_KEY"):
+                headers["Authorization"] = f"Bearer {os.getenv('DEEPINFRA_API_KEY')}"
+            response = _http_json(DEEPINFRA_URL, method="POST", body=payload, headers=headers, timeout=25)
+            content = _parse_ai_text_response(response)
+            return content[:350] if content else None
+
+        if provider == "duckduckgo":
+            if not DUCKDUCKGO_AI_URL:
+                return None
+            response = _http_json(
+                DUCKDUCKGO_AI_URL,
+                method="POST",
+                body={"question": prompt},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:350] if content else None
+
+        if provider == "nerve":
+            if not NERVE_URL:
+                return None
+            response = _http_json(
+                NERVE_URL,
+                method="POST",
+                body={"prompt": prompt, "max_new_tokens": 180},
+                headers={"Content-Type": "application/json"},
+                timeout=25,
+            )
+            content = _parse_ai_text_response(response)
+            return content[:350] if content else None
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        _debug(f"AI Greek description enrichment failed ({provider}): {exc}")
         return None
 
     return None
@@ -850,93 +1327,340 @@ def search_products_by_description(search_text: str, ai_provider: str = "auto") 
     return results
 
 
+def _score_taric_entry(normalized_text: str, query_tokens: set[str], entry: TaricEntry) -> int:
+    text = f" {normalized_text} "
+    score = 0
+    normalized_description = _normalize_text_for_matching(entry.description)
+
+    for keyword in entry.keywords:
+        normalized_keyword = _normalize_text_for_matching(keyword)
+        keyword_tokens = _tokenize_for_matching(normalized_keyword)
+        if not keyword_tokens:
+            continue
+
+        if f" {normalized_keyword} " in text:
+            score += 4 + len(keyword_tokens)
+        else:
+            overlap = len(query_tokens.intersection(keyword_tokens))
+            score += overlap
+
+    vaping_keywords = {"vape", "eliquid", "ecig", "ecigarette", "puff", "inhalation", "nicotine", "nic salt"}
+    has_vaping_context = bool(query_tokens.intersection(vaping_keywords))
+
+    food_beverage_keywords = {"juice", "drink", "beverage", "flavor", "flavour", "fruit", "pear", "apple", "orange", "grape", "concentrate", "syrup", "aroma"}
+    has_food_context = bool(query_tokens.intersection(food_beverage_keywords))
+
+    tissue_keywords = {"toilet", "paper", "tissue", "bathroom", "ply", "roll"}
+    has_tissue_context = bool(query_tokens.intersection(tissue_keywords))
+
+    cosmetics_keywords = {
+        "cosmetic", "cosmetics", "makeup", "concealer", "mascara", "lipstick",
+        "foundation", "eyeliner", "skincare", "beauty",
+    }
+    has_cosmetics_context = bool(query_tokens.intersection(cosmetics_keywords))
+
+    if has_food_context and not has_vaping_context:
+        if entry.hs4.startswith("2404"):
+            score -= 10
+
+    if has_vaping_context and entry.hs4.startswith("2404"):
+        score += 5
+
+    if has_tissue_context:
+        if entry.hs4 == "4818":
+            score += 4
+        if entry.hs4 == "4809":
+            score -= 2
+
+    if has_cosmetics_context:
+        if entry.hs4 == "3304":
+            score += 6
+        if entry.hs4 == "9619":
+            score -= 4
+        if entry.hs4.startswith("22"):
+            score -= 8
+
+    if "nicotine" in query_tokens and has_vaping_context:
+        if "with nicotine" in normalized_description:
+            score += 5
+        if "without nicotine" in normalized_description:
+            score -= 2
+
+    return score
+
+
+def _taric_entry_by_code(taric_code: str, catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG) -> Optional[TaricEntry]:
+    cleaned_code = re.sub(r"\D", "", taric_code)
+    for entry in catalog:
+        if entry.taric_code == cleaned_code:
+            return entry
+    return None
+
+
+def _top_taric_candidates(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG, limit: int = 5) -> list[dict[str, str]]:
+    normalized_text = _normalize_text_for_matching(customs_text)
+    query_tokens = set(_tokenize_for_matching(normalized_text))
+    ranked: list[tuple[int, TaricEntry]] = []
+
+    for entry in catalog:
+        ranked.append((_score_taric_entry(normalized_text, query_tokens, entry), entry))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    candidates: list[dict[str, str]] = []
+    for score, entry in ranked[:limit]:
+        if score <= 0:
+            continue
+        candidates.append({
+            "taric_code": entry.taric_code,
+            "hs4": entry.hs4,
+            "description": entry.description,
+        })
+    return candidates
+
+
 def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG) -> Optional[TaricEntry]:
     normalized_text = _normalize_text_for_matching(customs_text)
-    text = f" {normalized_text} "
     query_tokens = set(_tokenize_for_matching(normalized_text))
 
     best: tuple[int, Optional[TaricEntry]] = (0, None)
     for entry in catalog:
-        score = 0
-        normalized_description = _normalize_text_for_matching(entry.description)
-        
-        for keyword in entry.keywords:
-            normalized_keyword = _normalize_text_for_matching(keyword)
-            keyword_tokens = _tokenize_for_matching(normalized_keyword)
-            if not keyword_tokens:
-                continue
-
-            if f" {normalized_keyword} " in text:
-                score += 4 + len(keyword_tokens)
-            else:
-                overlap = len(query_tokens.intersection(keyword_tokens))
-                score += overlap
-
-        # Disambiguation logic for specific categories
-        
-        # 1. Vaping context detection - be more specific about what constitutes vaping context
-        # "juice" alone is NOT a vaping keyword - it's a beverage/food keyword
-        # Only consider vaping context if there are explicit vaping-related terms
-        vaping_keywords = {"vape", "eliquid", "ecig", "ecigarette", "puff", "inhalation", "nicotine", "nic salt"}
-        has_vaping_context = bool(query_tokens.intersection(vaping_keywords))
-        
-        # 2. Beverage/food context detection
-        food_beverage_keywords = {"juice", "drink", "beverage", "flavor", "flavour", "fruit", "pear", "apple", "orange", "grape", "concentrate", "syrup", "aroma"}
-        has_food_context = bool(query_tokens.intersection(food_beverage_keywords))
-        
-        # 3. If we have food context but NO vaping context, penalize vape entries
-        if has_food_context and not has_vaping_context:
-            if entry.hs4.startswith("2404"):
-                score -= 10  # Strong penalty for vape entries when it's clearly a food product
-        
-        # 4. If we have vaping context, boost vape entries
-        if has_vaping_context:
-            if entry.hs4.startswith("2404"):
-                score += 5
-        
-        # 5. Disambiguate the nicotine/non-nicotine 2404 entries only when query is explicit AND has vaping-related keywords.
-        if "nicotine" in query_tokens and has_vaping_context:
-            if "with nicotine" in normalized_description:
-                score += 5
-            if "without nicotine" in normalized_description:
-                score -= 2
-
+        score = _score_taric_entry(normalized_text, query_tokens, entry)
         if score > best[0]:
             best = (score, entry)
+
+    if best[0] < 3:
+        return None
     return best[1]
+
+
+def ai_validate_taric_match(
+    match: Optional[TaricEntry],
+    customs_text: str,
+    commercial_text: str,
+    provider: str = "auto",
+    catalog: Iterable[TaricEntry] = DEFAULT_TARIC_CATALOG,
+) -> Optional[dict[str, Any]]:
+    provider = _get_effective_ai_provider(provider)
+    if provider == "none":
+        return None
+
+    match_label = f"{match.taric_code} ({match.description})" if match else "no current TARIC match"
+    candidates = _top_taric_candidates(customs_text, catalog=catalog, limit=5)
+    prompt = (
+        "Validate the EU TARIC classification using the latest available catalog context. "
+        "Use the commercial text, the customs-style description, the current TARIC match, and the candidate TARIC codes. "
+        "Decide whether the current match is correct. If it is wrong, choose the best candidate or return a corrected customs description that leads to a better match. "
+        "Return ONLY valid JSON with these keys: approved (boolean), taric_code (string or null), hs4 (string or null), customs_text (string or null), reason (string), confidence (string). "
+        "Commercial product text: {commercial_text} "
+        "Current customs-style description: {customs_text} "
+        "Current TARIC match: {match_label} "
+        "Candidate TARIC codes: {candidates}"
+    ).format(
+        commercial_text=commercial_text,
+        customs_text=customs_text,
+        match_label=match_label,
+        candidates=json.dumps(candidates, ensure_ascii=False),
+    )
+
+    try:
+        if provider == "pollinations":
+            encoded = urllib.parse.quote(prompt)
+            response = _http_text(POLLINATIONS_URL.format(prompt=encoded), timeout=18).strip()
+        elif provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                return None
+            payload = {
+                "model": "meta-llama/llama-3.3-70b-instruct:free",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+            }
+            response = _http_json(
+                OPENROUTER_URL,
+                method="POST",
+                body=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=20,
+            )
+            response = _parse_ai_text_response(response)
+        elif provider == "deepinfra":
+            if not DEEPINFRA_URL:
+                return None
+            payload = {
+                "model": DEEPINFRA_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 220,
+            }
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("DEEPINFRA_API_KEY"):
+                headers["Authorization"] = f"Bearer {os.getenv('DEEPINFRA_API_KEY')}"
+            response = _http_json(DEEPINFRA_URL, method="POST", body=payload, headers=headers, timeout=25)
+            response = _parse_ai_text_response(response)
+        elif provider == "duckduckgo":
+            if not DUCKDUCKGO_AI_URL:
+                return None
+            payload = {"question": prompt}
+            response = _http_json(DUCKDUCKGO_AI_URL, method="POST", body=payload, headers={"Content-Type": "application/json"}, timeout=25)
+            response = _parse_ai_text_response(response)
+        elif provider == "nerve":
+            if not NERVE_URL:
+                return None
+            payload = {"prompt": prompt, "max_new_tokens": 220}
+            response = _http_json(NERVE_URL, method="POST", body=payload, headers={"Content-Type": "application/json"}, timeout=25)
+            response = _parse_ai_text_response(response)
+        else:
+            return None
+    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        _debug(f"AI TARIC validation failed ({provider}): {exc}")
+        return None
+
+    if not response:
+        return None
+
+    raw_text = response.strip()
+    raw_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.I | re.S)
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    parsed["approved"] = bool(parsed.get("approved"))
+    if parsed.get("taric_code"):
+        parsed["taric_code"] = re.sub(r"\D", "", str(parsed["taric_code"]))
+    if parsed.get("hs4"):
+        parsed["hs4"] = re.sub(r"\D", "", str(parsed["hs4"]))
+    return parsed
 
 
 def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = True) -> dict[str, Any]:
     query = item.strip()
     normalized_barcode = normalize_to_ean13(query)
+    effective_provider = _get_effective_ai_provider(ai_provider)
 
     source_data: dict[str, Any] = {}
     commercial_text = query
     product_name = ""
+    product_name_en = ""
     product_description = ""
+    description_en = ""
     
     if normalized_barcode:
-        source_data = fetch_product_multi_source(normalized_barcode)
+        source_data = fetch_product_multi_source(normalized_barcode, ai_provider=effective_provider)
         if source_data.get("found"):
             product_name = source_data.get("product_name", "")
             product_description = source_data.get("description", "")
-            parts = [
+            product_name = _sanitize_product_name(
                 product_name,
-                source_data.get("categories"),
-                source_data.get("brand"),
-                product_description,
-            ]
-            commercial_text = " ".join(
-                str(p) for p in parts if p and str(p) not in ("None", "")
+                brand=str(source_data.get("brand") or ""),
+                description=str(product_description or product_name or ""),
+                categories=str(source_data.get("categories") or ""),
             )
+            source_data["product_name"] = product_name
 
-    effective_provider = _get_effective_ai_provider(ai_provider)
+    if product_name and effective_provider != "none":
+        if _contains_greek(product_name):
+            translated_name = ai_translate_text(product_name, target_language="en", provider=effective_provider)
+            if translated_name and not _contains_greek(translated_name):
+                product_name_en = translated_name
+            else:
+                product_name_en = parser_rewrite_to_customs_text(product_name)
+        else:
+            product_name_en = product_name
+    else:
+        product_name_en = product_name
+
+    if normalized_barcode and effective_provider != "none":
+        # Keep DB columns semantically stable: description=Greek, commercial_text=English.
+        if product_description:
+            if _contains_greek(product_description):
+                translated_en = ai_translate_text(product_description, target_language="en", provider=effective_provider)
+                if translated_en and not _contains_greek(translated_en):
+                    description_en = translated_en
+                else:
+                    description_en = parser_rewrite_to_customs_text(product_description)
+            elif _contains_latin(product_description) and not _contains_greek(product_description):
+                description_en = product_description
+
+        if description_en and not _contains_greek(product_description):
+            translated_el = ai_translate_text(description_en, target_language="el", provider=effective_provider)
+            if translated_el:
+                product_description = translated_el
+
+        if product_description and _contains_greek(product_description) and _contains_greek(description_en):
+            translated_en = ai_translate_text(product_description, target_language="en", provider=effective_provider)
+            if translated_en:
+                description_en = translated_en
+
+    if normalized_barcode and _is_placeholder_description(product_description) and effective_provider != "none":
+        enriched_description = ai_enrich_product_description_greek(
+            product_name=product_name,
+            brand=source_data.get("brand"),
+            categories=source_data.get("categories"),
+            barcode=normalized_barcode,
+            provider=effective_provider,
+        )
+        if enriched_description:
+            product_description = enriched_description
+            if source_data:
+                source_data["description"] = enriched_description
+
+    if normalized_barcode and not source_data.get("found"):
+        # Avoid false TARIC matches from bare barcode digits when we have no evidence.
+        return {
+            "input": query,
+            "barcode": normalized_barcode,
+            "valid_ean13": is_valid_ean13(normalized_barcode),
+            "source": {"source": "none", "found": False},
+            "product_name": "",
+            "product_name_en": "",
+            "product_description": "",
+            "commercial_text": "",
+            "customs_text": "",
+            "ai_inspection": {
+                "provider": effective_provider,
+                "corrected_customs_text": None,
+            },
+            "ai_validation": {"checked": False, "approved": None},
+            "match": {
+                "taric_code": None,
+                "hs4": None,
+                "description": "No confident match",
+            },
+            "validation": {
+                "checked": False,
+                "stored": False,
+            },
+        }
+
+    if not description_en and product_description:
+        if _contains_greek(product_description) and effective_provider != "none":
+            translated_en = ai_translate_text(product_description, target_language="en", provider=effective_provider)
+            if translated_en and not _contains_greek(translated_en):
+                description_en = translated_en
+            else:
+                description_en = parser_rewrite_to_customs_text(product_description)
+        else:
+            description_en = product_description
+
+    commercial_parts = [
+        product_name_en or product_name,
+        source_data.get("categories"),
+        source_data.get("brand"),
+        description_en,
+    ]
+    commercial_text = " ".join(str(p) for p in commercial_parts if p and str(p) not in ("None", "")) or query
+
     parser_text = parser_rewrite_to_customs_text(commercial_text)
     ai_text = ai_rewrite_to_customs_text(commercial_text, provider=effective_provider)
     customs_text = parser_rewrite_to_customs_text(ai_text) if ai_text else parser_text
 
     corrected_customs_text = None
     match = best_taric_match(customs_text)
+    validation_result: Optional[dict[str, Any]] = None
 
     if effective_provider != "none":
         verified_text = ai_inspect_and_correct_customs_text(
@@ -952,12 +1676,43 @@ def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = Tr
                 customs_text = corrected_customs_text
                 match = best_taric_match(customs_text)
 
+        validation_result = ai_validate_taric_match(
+            match,
+            customs_text,
+            commercial_text,
+            provider=effective_provider,
+        )
+
+        if validation_result:
+            validated_customs_text = validation_result.get("customs_text")
+            if isinstance(validated_customs_text, str) and validated_customs_text.strip():
+                corrected_customs_text = parser_rewrite_to_customs_text(validated_customs_text)
+                if corrected_customs_text:
+                    customs_text = corrected_customs_text
+                    match = best_taric_match(customs_text)
+
+            validated_code = validation_result.get("taric_code")
+            validated_entry = _taric_entry_by_code(str(validated_code)) if validated_code else None
+            if validated_entry:
+                match = validated_entry
+            elif match is None:
+                match = best_taric_match(customs_text)
+
+            if validation_result.get("approved") is False:
+                approved_code = validation_result.get("taric_code")
+                if approved_code and not validated_entry:
+                    fallback_text = validation_result.get("customs_text")
+                    if isinstance(fallback_text, str) and fallback_text.strip():
+                        customs_text = parser_rewrite_to_customs_text(fallback_text)
+                        match = best_taric_match(customs_text)
+
     result = {
         "input": query,
         "barcode": normalized_barcode,
         "valid_ean13": is_valid_ean13(normalized_barcode) if normalized_barcode else False,
         "source": source_data or {"source": "direct_input"},
         "product_name": product_name,
+        "product_name_en": product_name_en,
         "product_description": product_description,
         "commercial_text": commercial_text,
         "customs_text": customs_text,
@@ -965,18 +1720,24 @@ def resolve_item(item: str, *, ai_provider: str = "auto", store_in_db: bool = Tr
             "provider": effective_provider,
             "corrected_customs_text": corrected_customs_text,
         },
+        "ai_validation": validation_result or {"checked": False, "approved": None},
         "match": {
             "taric_code": match.taric_code if match else None,
             "hs4": match.hs4 if match else None,
             "description": match.description if match else "No confident match",
         },
+        "validation": {
+            "checked": True,
+            "stored": bool(match),
+        },
     }
     
-    # Store in database if enabled (always store, even without TARIC match)
-    if store_in_db and HAS_DATABASE:
+    # Store only after a successful TARIC check.
+    if store_in_db and HAS_DATABASE and match:
         product = ProductRecord(
             barcode=normalized_barcode,
             product_name=product_name,
+            product_name_en=product_name_en,
             description=product_description,
             commercial_text=commercial_text,
             customs_text=customs_text,

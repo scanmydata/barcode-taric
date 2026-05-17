@@ -4,6 +4,8 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
 
+import taric_lookup
+
 from taric_lookup import (
     best_taric_match,
     fetch_barcode_monster_product,
@@ -57,6 +59,12 @@ class TaricLookupTests(unittest.TestCase):
         match = best_taric_match("portable laptop computer")
         self.assertIsNotNone(match)
         self.assertEqual(match.hs4, "8471")
+
+    def test_best_taric_match_for_cosmetics_formula_text(self):
+        text = "eye concealer cosmetic cream containing water mineral oil silica titanium dioxide preservatives"
+        match = best_taric_match(text)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.taric_code, "3304990000")
 
     def test_best_taric_match_returns_none_when_no_match(self):
         self.assertIsNone(best_taric_match("zzqv totally unrelated product text"))
@@ -233,7 +241,8 @@ class TaricLookupTests(unittest.TestCase):
     @patch("taric_lookup.fetch_barcode_monster_product")
     @patch("taric_lookup.fetch_upcitemdb_product")
     @patch("taric_lookup.fetch_openfoodfacts_product")
-    def test_fetch_product_multi_source_returns_first_hit(self, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
+    @patch("taric_lookup.ai_infer_product_from_web", return_value=None)
+    def test_fetch_product_multi_source_returns_first_hit(self, _mock_ai, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
         mock_off.return_value = {"source": "OpenFoodFacts", "found": True, "product_name": "AVRA Water", "brand": "AVRA", "categories": "Waters", "description": None}
         result = fetch_product_multi_source("5201005080027")
         self.assertEqual(result["source"], "OpenFoodFacts")
@@ -243,7 +252,8 @@ class TaricLookupTests(unittest.TestCase):
     @patch("taric_lookup.fetch_barcode_monster_product")
     @patch("taric_lookup.fetch_upcitemdb_product")
     @patch("taric_lookup.fetch_openfoodfacts_product")
-    def test_fetch_product_multi_source_falls_back_to_upcitemdb(self, mock_off, mock_upc, mock_monster):
+    @patch("taric_lookup.ai_infer_product_from_web", return_value=None)
+    def test_fetch_product_multi_source_falls_back_to_upcitemdb(self, _mock_ai, mock_off, mock_upc, mock_monster):
         mock_off.return_value = {"source": "OpenFoodFacts", "found": False}
         mock_upc.return_value = {"source": "UPCItemDB", "found": True, "product_name": "Vape Liquid", "brand": "Bombo", "categories": "Vape", "description": "E-liquid"}
         result = fetch_product_multi_source("8447351005797")
@@ -256,7 +266,8 @@ class TaricLookupTests(unittest.TestCase):
     @patch("taric_lookup.fetch_barcode_monster_product")
     @patch("taric_lookup.fetch_upcitemdb_product")
     @patch("taric_lookup.fetch_openfoodfacts_product")
-    def test_fetch_product_multi_source_all_fail(self, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
+    @patch("taric_lookup.ai_infer_product_from_web", return_value=None)
+    def test_fetch_product_multi_source_all_fail(self, _mock_ai, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
         mock_off.return_value = {"source": "OpenFoodFacts", "found": False}
         mock_upc.return_value = {"source": "UPCItemDB", "found": False}
         mock_monster.return_value = {"source": "BarcodeMonster", "found": False}
@@ -265,6 +276,76 @@ class TaricLookupTests(unittest.TestCase):
         mock_bl.return_value = {"source": "BarcodeLookup", "found": False}
         result = fetch_product_multi_source("0000000000000")
         self.assertFalse(result["found"])
+
+    @patch("taric_lookup.fetch_barcodelookup_product")
+    @patch("taric_lookup.fetch_ean_search_product")
+    @patch("taric_lookup.fetch_go_upc_product")
+    @patch("taric_lookup.fetch_barcode_monster_product")
+    @patch("taric_lookup.fetch_upcitemdb_product")
+    @patch("taric_lookup.fetch_openfoodfacts_product")
+    @patch("taric_lookup.ai_infer_product_from_web")
+    def test_fetch_product_multi_source_uses_ai_web_fallback(self, mock_ai, mock_off, mock_upc, mock_monster, mock_go, mock_es, mock_bl):
+        mock_off.return_value = {"source": "OpenFoodFacts", "found": False}
+        mock_upc.return_value = {"source": "UPCItemDB", "found": False}
+        mock_monster.return_value = {"source": "BarcodeMonster", "found": False}
+        mock_go.return_value = {"source": "GoUPC", "found": False}
+        mock_es.return_value = {"source": "EANSearch", "found": False}
+        mock_bl.return_value = {"source": "BarcodeLookup", "found": False}
+
+        inferred = {
+            "source": "AIWebSearch",
+            "found": True,
+            "product_name": "Inferred Product",
+            "brand": "Demo",
+            "categories": "Demo Category",
+            "description": "Inferred description",
+        }
+        mock_ai.return_value = inferred
+        result = fetch_product_multi_source("0000000000000")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["source"], "AIWebSearch")
+        mock_off.assert_not_called()
+
+    def test_auto_provider_prefers_duckduckgo(self):
+        provider = taric_lookup._get_effective_ai_provider("auto")
+        self.assertEqual(provider, "duckduckgo")
+
+    @patch("taric_lookup._duckduckgo_web_search_context", return_value="sample result")
+    @patch("taric_lookup._http_json")
+    def test_ai_infer_product_filters_keyword_stuffed_name(self, mock_http_json, _mock_ctx):
+        mock_http_json.return_value = {
+            "content": (
+                '{"product_name":"Eye Concealer Women Cosmetics Makeup Dark Circle Blemishes Cover Skin Care Kit",'
+                '"brand":"Maybelline New York",'
+                '"categories":"Health & Beauty > Personal Care > Cosmetics > Makeup",'
+                '"description":"Eye concealer makeup product",'
+                '"confidence":"high"}'
+            )
+        }
+        result = taric_lookup.ai_infer_product_from_web("3600530733842", provider="duckduckgo")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["source"], "AIWebSearch")
+        self.assertEqual(result["product_name"], "")
+        self.assertEqual(result["brand"], "Maybelline New York")
+
+    @patch("taric_lookup.ai_rewrite_to_customs_text", return_value=None)
+    @patch("taric_lookup.fetch_product_multi_source")
+    def test_resolve_item_sanitizes_keyword_stuffed_source_name(self, mock_multi, _mock_ai):
+        mock_multi.return_value = {
+            "source": "UPCItemDB",
+            "found": True,
+            "product_name": "Eye Concealer Women Cosmetics Makeup Dark Circle Blemishes Cover Skin Care Kit",
+            "brand": "Maybelline New York",
+            "categories": "Health & Beauty > Personal Care > Cosmetics > Makeup",
+            "description": "Eye Concealer Women Cosmetics Makeup Dark Circle Blemishes Cover Skin Care Kit",
+        }
+
+        result = resolve_item("3600530733842", ai_provider="none", store_in_db=False)
+        self.assertEqual(result["source"]["source"], "UPCItemDB")
+        self.assertEqual(result["product_name"], "Maybelline New York Eye Concealer")
+        self.assertEqual(result["product_name_en"], "Maybelline New York Eye Concealer")
+        self.assertEqual(result["match"]["taric_code"], "3304990000")
 
     # ------------------------------------------------------------------
     # End-to-end: water barcode 5201005080027 → TARIC 2201
@@ -309,6 +390,45 @@ class TaricLookupTests(unittest.TestCase):
         self.assertTrue(result["valid_ean13"])
         self.assertEqual(result["match"]["hs4"], "2404")
         self.assertEqual(result["match"]["taric_code"], "2404120000")
+
+    @patch("taric_lookup.ai_validate_taric_match")
+    @patch("taric_lookup.ai_inspect_and_correct_customs_text", return_value=None)
+    @patch("taric_lookup.ai_rewrite_to_customs_text", return_value=None)
+    @patch("taric_lookup.ai_translate_text", return_value=None)
+    @patch("taric_lookup.fetch_product_multi_source")
+    def test_resolve_item_uses_ai_validation_to_override_stale_match(self, mock_multi, _mock_translate, _mock_ai_rewrite, _mock_ai_inspect, mock_validate):
+        mock_multi.return_value = {
+            "source": "UPCItemDB",
+            "found": True,
+            "product_name": "Bombo Bar Juice Hyper Boost Pear Ice 10ml/120ml FS",
+            "categories": "Electronic Cigarettes",
+            "brand": "Bombo",
+            "description": "No description found.",
+        }
+        mock_validate.return_value = {
+            "approved": False,
+            "taric_code": "2404120000",
+            "hs4": "2404",
+            "customs_text": "vape e-liquid nicotine free",
+            "reason": "The product is a vape liquid, not a food supplement or juice preparation.",
+            "confidence": "high",
+        }
+
+        result = resolve_item("8447351005797", ai_provider="auto", store_in_db=False)
+
+        self.assertEqual(result["match"]["taric_code"], "2404120000")
+        self.assertEqual(result["match"]["hs4"], "2404")
+        self.assertEqual(result["customs_text"], "vape e-liquid nicotine free")
+        self.assertEqual(result["ai_validation"]["taric_code"], "2404120000")
+        self.assertFalse(result["ai_validation"]["approved"])
+
+    @patch("taric_lookup.fetch_product_multi_source")
+    def test_resolve_item_unknown_barcode_returns_no_match(self, mock_multi):
+        mock_multi.return_value = {"source": "none", "found": False}
+        result = resolve_item("5202960002925", ai_provider="auto", store_in_db=False)
+        self.assertIsNone(result["match"]["taric_code"])
+        self.assertFalse(result["validation"]["stored"])
+        self.assertEqual(result["source"]["source"], "none")
 
 
 if __name__ == "__main__":

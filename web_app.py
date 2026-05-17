@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 """Web-based TARIC lookup interface (works without X11 display)."""
 
-from flask import Flask, render_template_string, request, jsonify
-from taric_lookup import resolve_item, load_inputs
-from product_database import get_all_products
+from flask import Flask, Response, request, jsonify
+import importlib
+import subprocess
+from datetime import date
+
+import taric_lookup
+from product_database import (
+    create_product,
+    delete_product_by_id,
+    get_all_products_with_id,
+    update_product_by_id,
+)
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 app = Flask(__name__)
+UI_TEMPLATE_PATH = Path(__file__).with_name("web_app_ui.html")
+TARIC_REFRESH_STATE_PATH = Path(__file__).with_name("db") / "taric_refresh_state.json"
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -747,9 +759,64 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
+def _read_taric_refresh_state() -> dict[str, str]:
+    if not TARIC_REFRESH_STATE_PATH.is_file():
+        return {}
+
+    try:
+        return json.loads(TARIC_REFRESH_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_taric_refresh_state(state: dict[str, str]) -> None:
+    TARIC_REFRESH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TARIC_REFRESH_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def refresh_taric_catalog_if_needed(*, force: bool = False) -> bool:
+    today = date.today().isoformat()
+    state = _read_taric_refresh_state()
+    if not force and state.get("last_successful_refresh") == today:
+        print(f"TARIC catalog already refreshed for {today}")
+        return False
+
+    generator_script = Path(__file__).with_name("generate_taric_catalog.py")
+    print("Refreshing TARIC catalog from the local EU-derived generator...")
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(generator_script)],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+    except OSError as exc:
+        print(f"TARIC refresh failed to start: {exc}")
+        return False
+
+    if completed.returncode != 0:
+        print("TARIC refresh failed:")
+        if completed.stderr:
+            print(completed.stderr)
+        return False
+
+    importlib.reload(taric_lookup)
+    _write_taric_refresh_state(
+        {
+            "last_successful_refresh": today,
+            "source": "generate_taric_catalog.py",
+        }
+    )
+    print(f"TARIC catalog refreshed for {today}")
+    return True
+
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return Response(UI_TEMPLATE_PATH.read_text(encoding='utf-8'), mimetype='text/html')
 
 @app.route('/api/lookup', methods=['POST'])
 def api_lookup():
@@ -761,7 +828,7 @@ def api_lookup():
     results = []
     for item in items:
         try:
-            result = resolve_item(item, ai_provider=ai_provider)
+            result = taric_lookup.resolve_item(item, ai_provider=ai_provider)
             results.append(result)
         except Exception as e:
             results.append({
@@ -791,7 +858,7 @@ def api_lookup_file():
         tmp_path = Path(tmp.name)
 
     try:
-        items = load_inputs(tmp_path)
+        items = taric_lookup.load_inputs(tmp_path)
     except Exception as e:
         return jsonify({'error': str(e)}), 400
     finally:
@@ -800,7 +867,7 @@ def api_lookup_file():
     results = []
     for item in items:
         try:
-            results.append(resolve_item(item, ai_provider=ai_provider))
+            results.append(taric_lookup.resolve_item(item, ai_provider=ai_provider))
         except Exception as e:
             results.append({
                 'input': item,
@@ -815,23 +882,55 @@ def api_lookup_file():
 def api_stored_products():
     """API endpoint to fetch all stored products from database."""
     try:
-        products = get_all_products()
-        products_list = []
-        for p in products:
-            products_list.append({
-                'barcode': p.barcode,
-                'product_name': p.product_name,
-                'description': p.description,
-                'commercial_text': p.commercial_text,
-                'customs_text': p.customs_text,
-                'taric_code': p.taric_code,
-                'hs4': p.hs4,
-                'taric_description': p.taric_description,
-                'source': p.source
-            })
-        return jsonify({'products': products_list})
+        return jsonify({'products': get_all_products_with_id()})
     except Exception as e:
         return jsonify({'error': str(e), 'products': []}), 500
+
+
+@app.route('/api/stored-products', methods=['POST'])
+def api_create_stored_product():
+    payload = request.json or {}
+    if not payload.get('product_name_en') and payload.get('product_name'):
+        translated_name = taric_lookup.ai_translate_text(
+            str(payload.get('product_name')),
+            target_language='en',
+            provider='auto',
+        )
+        if translated_name and not taric_lookup._contains_greek(translated_name):
+            payload['product_name_en'] = translated_name
+        else:
+            payload['product_name_en'] = taric_lookup.parser_rewrite_to_customs_text(str(payload.get('product_name')))
+    created_id = create_product(payload)
+    if created_id is None:
+        return jsonify({'error': 'Failed to create product'}), 400
+    return jsonify({'ok': True, 'id': created_id})
+
+
+@app.route('/api/stored-products/<int:product_id>', methods=['PUT'])
+def api_update_stored_product(product_id: int):
+    payload = request.json or {}
+    if not payload.get('product_name_en') and payload.get('product_name'):
+        translated_name = taric_lookup.ai_translate_text(
+            str(payload.get('product_name')),
+            target_language='en',
+            provider='auto',
+        )
+        if translated_name and not taric_lookup._contains_greek(translated_name):
+            payload['product_name_en'] = translated_name
+        else:
+            payload['product_name_en'] = taric_lookup.parser_rewrite_to_customs_text(str(payload.get('product_name')))
+    updated = update_product_by_id(product_id, payload)
+    if not updated:
+        return jsonify({'error': 'Product not found or update failed'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/stored-products/<int:product_id>', methods=['DELETE'])
+def api_delete_stored_product(product_id: int):
+    deleted = delete_product_by_id(product_id)
+    if not deleted:
+        return jsonify({'error': 'Product not found'}), 404
+    return jsonify({'ok': True})
 
 if __name__ == '__main__':
     import sys
@@ -848,6 +947,7 @@ if __name__ == '__main__':
     print("\nOpen your browser to:")
     print("   -> http://localhost:5000")
     print("\nGreek/English support enabled for all EU TARIC chapters")
+    refresh_taric_catalog_if_needed()
     print("="*60 + "\n")
     
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False, use_debugger=True)

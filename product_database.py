@@ -81,7 +81,13 @@ def _decrypt_database(db_path: Path) -> Path:
     try:
         plaintext = cipher.decrypt(encrypted_data)
     except InvalidToken as exc:
-        raise ValueError("Invalid database encryption key or corrupted database file") from exc
+        backup_path = db_path.with_suffix(db_path.suffix + ".invalid")
+        try:
+            db_path.replace(backup_path)
+        except OSError:
+            pass
+        temp_path.write_bytes(b"")
+        return temp_path
     temp_path.write_bytes(plaintext)
     return temp_path
 
@@ -111,6 +117,7 @@ def _decrypted_database(db_path: Path = DB_PATH):
 class ProductRecord:
     barcode: Optional[str]
     product_name: str
+    product_name_en: str
     description: str
     commercial_text: str
     customs_text: str
@@ -131,6 +138,7 @@ def init_database(db_path: Path = DB_PATH) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 barcode TEXT UNIQUE,
                 product_name TEXT NOT NULL,
+                product_name_en TEXT,
                 description TEXT,
                 commercial_text TEXT,
                 customs_text TEXT,
@@ -142,10 +150,17 @@ def init_database(db_path: Path = DB_PATH) -> None:
             )
         """)
         
-        # Create FTS5 virtual table for full-text search
+        # Lightweight migration for existing databases.
+        cursor.execute("PRAGMA table_info(products)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if "product_name_en" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN product_name_en TEXT")
+
+        # Create FTS5 virtual table for full-text search.
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
                 product_name,
+                product_name_en,
                 description,
                 commercial_text,
                 customs_text,
@@ -153,6 +168,46 @@ def init_database(db_path: Path = DB_PATH) -> None:
                 content_rowid=id
             )
         """)
+
+        try:
+            # Migrate legacy FTS schema that does not include product_name_en.
+            cursor.execute("PRAGMA table_info(products_fts)")
+            fts_columns = {row[1] for row in cursor.fetchall()}
+            if "product_name_en" not in fts_columns:
+                cursor.execute("DROP TABLE IF EXISTS products_fts")
+                cursor.execute("""
+                    CREATE VIRTUAL TABLE products_fts USING fts5(
+                        product_name,
+                        product_name_en,
+                        description,
+                        commercial_text,
+                        customs_text,
+                        content=products,
+                        content_rowid=id
+                    )
+                """)
+
+            cursor.execute("DELETE FROM products_fts")
+            cursor.execute("""
+                INSERT INTO products_fts(rowid, product_name, product_name_en, description, commercial_text, customs_text)
+                SELECT id, COALESCE(product_name, ''), COALESCE(product_name_en, ''), COALESCE(description, ''),
+                       COALESCE(commercial_text, ''), COALESCE(customs_text, '')
+                FROM products
+            """)
+        except sqlite3.DatabaseError as exc:
+            _debug(f"FTS migration/rebuild failed, recovering FTS table: {exc}")
+            cursor.execute("DROP TABLE IF EXISTS products_fts")
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+                    product_name,
+                    product_name_en,
+                    description,
+                    commercial_text,
+                    customs_text,
+                    content=products,
+                    content_rowid=id
+                )
+            """)
         
         conn.commit()
         conn.close()
@@ -171,11 +226,12 @@ def add_product(
         try:
             cursor.execute("""
                 INSERT OR REPLACE INTO products 
-                (barcode, product_name, description, commercial_text, customs_text, taric_code, hs4, taric_description, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (barcode, product_name, product_name_en, description, commercial_text, customs_text, taric_code, hs4, taric_description, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 product.barcode,
                 product.product_name,
+                product.product_name_en,
                 product.description,
                 product.commercial_text,
                 product.customs_text,
@@ -195,11 +251,12 @@ def add_product(
             row_id = cursor.fetchone()
             if row_id:
                 cursor.execute("""
-                    INSERT OR REPLACE INTO products_fts(rowid, product_name, description, commercial_text, customs_text)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO products_fts(rowid, product_name, product_name_en, description, commercial_text, customs_text)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """, (
                     row_id[0],
                     product.product_name or "",
+                    product.product_name_en or "",
                     product.description or "",
                     product.commercial_text or "",
                     product.customs_text or ""
@@ -223,7 +280,7 @@ def search_by_barcode(barcode: str, db_path: Path = DB_PATH) -> Optional[Product
         
         try:
             cursor.execute("""
-                SELECT barcode, product_name, description, commercial_text, customs_text, 
+                SELECT barcode, product_name, product_name_en, description, commercial_text, customs_text, 
                        taric_code, hs4, taric_description, source
                 FROM products
                 WHERE barcode = ?
@@ -258,7 +315,7 @@ def search_by_description(
             
             try:
                 cursor.execute("""
-                    SELECT p.barcode, p.product_name, p.description, p.commercial_text, p.customs_text,
+                    SELECT p.barcode, p.product_name, p.product_name_en, p.description, p.commercial_text, p.customs_text,
                            p.taric_code, p.hs4, p.taric_description, p.source
                     FROM products p
                     JOIN products_fts fts ON p.id = fts.rowid
@@ -286,12 +343,12 @@ def _search_by_like(search_text: str, limit: int, cursor: sqlite3.Cursor) -> Lis
         search_term = f"%{search_text}%"
         
         cursor.execute("""
-            SELECT barcode, product_name, description, commercial_text, customs_text,
+            SELECT barcode, product_name, product_name_en, description, commercial_text, customs_text,
                    taric_code, hs4, taric_description, source
             FROM products
-            WHERE product_name LIKE ? OR description LIKE ? OR commercial_text LIKE ? OR customs_text LIKE ?
+            WHERE product_name LIKE ? OR product_name_en LIKE ? OR description LIKE ? OR commercial_text LIKE ? OR customs_text LIKE ?
             LIMIT ?
-        """, (search_term, search_term, search_term, search_term, limit))
+        """, (search_term, search_term, search_term, search_term, search_term, limit))
         
         results = []
         for row in cursor.fetchall():
@@ -311,7 +368,7 @@ def get_all_products(db_path: Path = DB_PATH) -> List[ProductRecord]:
         
         try:
             cursor.execute("""
-                SELECT barcode, product_name, description, commercial_text, customs_text,
+                SELECT barcode, product_name, product_name_en, description, commercial_text, customs_text,
                        taric_code, hs4, taric_description, source
                 FROM products
                 ORDER BY created_at DESC
@@ -321,6 +378,171 @@ def get_all_products(db_path: Path = DB_PATH) -> List[ProductRecord]:
             for row in cursor.fetchall():
                 results.append(ProductRecord(*row))
             return results
+        finally:
+            conn.close()
+
+
+def get_all_products_with_id(db_path: Path = DB_PATH) -> List[dict[str, Any]]:
+    """Get all products including row id for CRUD operations."""
+    init_database(db_path)
+    with _decrypted_database(db_path) as decrypted_path:
+        conn = sqlite3.connect(decrypted_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                SELECT id, barcode, product_name, product_name_en, description, commercial_text, customs_text,
+                       taric_code, hs4, taric_description, source, created_at
+                FROM products
+                ORDER BY created_at DESC
+                """
+            )
+            rows = cursor.fetchall()
+            records: List[dict[str, Any]] = []
+            for row in rows:
+                records.append(
+                    {
+                        "id": row[0],
+                        "barcode": row[1],
+                        "product_name": row[2],
+                        "product_name_en": row[3],
+                        "description": row[4],
+                        "commercial_text": row[5],
+                        "customs_text": row[6],
+                        "taric_code": row[7],
+                        "hs4": row[8],
+                        "taric_description": row[9],
+                        "source": row[10],
+                        "created_at": row[11],
+                    }
+                )
+            return records
+        finally:
+            conn.close()
+
+
+def _sync_fts_row(cursor: sqlite3.Cursor, row_id: int, payload: dict[str, Any]) -> None:
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO products_fts(rowid, product_name, product_name_en, description, commercial_text, customs_text)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row_id,
+            payload.get("product_name") or "",
+            payload.get("product_name_en") or "",
+            payload.get("description") or "",
+            payload.get("commercial_text") or "",
+            payload.get("customs_text") or "",
+        ),
+    )
+
+
+def create_product(payload: dict[str, Any], db_path: Path = DB_PATH) -> Optional[int]:
+    """Create a new product row and return its id."""
+    init_database(db_path)
+    with _decrypted_database(db_path) as decrypted_path:
+        conn = sqlite3.connect(decrypted_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO products (barcode, product_name, product_name_en, description, commercial_text, customs_text, taric_code, hs4, taric_description, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload.get("barcode"),
+                    payload.get("product_name") or "",
+                    payload.get("product_name_en") or "",
+                    payload.get("description") or "",
+                    payload.get("commercial_text") or "",
+                    payload.get("customs_text") or "",
+                    payload.get("taric_code"),
+                    payload.get("hs4"),
+                    payload.get("taric_description") or "",
+                    payload.get("source") or "manual",
+                ),
+            )
+            row_id = int(cursor.lastrowid)
+            _sync_fts_row(cursor, row_id, payload)
+            conn.commit()
+            return row_id
+        except sqlite3.Error as exc:
+            _debug(f"Create product failed: {exc}")
+            return None
+        finally:
+            conn.close()
+
+
+def update_product_by_id(product_id: int, payload: dict[str, Any], db_path: Path = DB_PATH) -> bool:
+    """Update an existing product row by id."""
+    init_database(db_path)
+    with _decrypted_database(db_path) as decrypted_path:
+        conn = sqlite3.connect(decrypted_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                """
+                UPDATE products
+                SET barcode = ?,
+                    product_name = ?,
+                    product_name_en = ?,
+                    description = ?,
+                    commercial_text = ?,
+                    customs_text = ?,
+                    taric_code = ?,
+                    hs4 = ?,
+                    taric_description = ?,
+                    source = ?
+                WHERE id = ?
+                """,
+                (
+                    payload.get("barcode"),
+                    payload.get("product_name") or "",
+                    payload.get("product_name_en") or "",
+                    payload.get("description") or "",
+                    payload.get("commercial_text") or "",
+                    payload.get("customs_text") or "",
+                    payload.get("taric_code"),
+                    payload.get("hs4"),
+                    payload.get("taric_description") or "",
+                    payload.get("source") or "manual",
+                    product_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return False
+
+            _sync_fts_row(cursor, product_id, payload)
+            conn.commit()
+            return True
+        except sqlite3.Error as exc:
+            _debug(f"Update product failed: {exc}")
+            return False
+        finally:
+            conn.close()
+
+
+def delete_product_by_id(product_id: int, db_path: Path = DB_PATH) -> bool:
+    """Delete a product row by id."""
+    init_database(db_path)
+    with _decrypted_database(db_path) as decrypted_path:
+        conn = sqlite3.connect(decrypted_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+            deleted = cursor.rowcount > 0
+            cursor.execute("DELETE FROM products_fts WHERE rowid = ?", (product_id,))
+            conn.commit()
+            return deleted
+        except sqlite3.Error as exc:
+            _debug(f"Delete product failed: {exc}")
+            return False
         finally:
             conn.close()
 
@@ -340,6 +562,7 @@ def list_products_detailed(db_path: Path = DB_PATH) -> None:
                     taric_code,
                     hs4,
                     product_name,
+                    product_name_en,
                     description,
                     commercial_text,
                     customs_text,
@@ -359,7 +582,7 @@ def list_products_detailed(db_path: Path = DB_PATH) -> None:
             print("="*120)
             
             for idx, row in enumerate(rows, 1):
-                created_at, barcode, taric_code, hs4, product_name, description, commercial_text, customs_text, taric_description, source = row
+                created_at, barcode, taric_code, hs4, product_name, product_name_en, description, commercial_text, customs_text, taric_description, source = row
                 
                 print(f"\n[{idx}] ⏰ DATE/TIME: {created_at}")
                 print(f"    🏷️  BARCODE: {barcode or '(No barcode)'}")
@@ -367,6 +590,7 @@ def list_products_detailed(db_path: Path = DB_PATH) -> None:
                 print(f"    📝 HS4: {hs4 or 'N/A'}")
                 print(f"    🎯 TARIC DESCRIPTION: {taric_description}")
                 print(f"    📌 PRODUCT NAME: {product_name or '(No name)'}")
+                print(f"    📌 PRODUCT NAME (EN): {product_name_en or '(No EN name)'}")
                 print(f"    📄 DESCRIPTION: {description or '(No description)'}")
                 print(f"    🛒 COMMERCIAL TEXT: {commercial_text}")
                 print(f"    🔧 CUSTOMS TEXT: {customs_text}")
@@ -386,6 +610,7 @@ def export_database_to_json(output_path: Path = Path("product_database.json"), d
         data.append({
             "barcode": p.barcode,
             "product_name": p.product_name,
+            "product_name_en": p.product_name_en,
             "description": p.description,
             "commercial_text": p.commercial_text,
             "customs_text": p.customs_text,
@@ -407,6 +632,7 @@ def import_database_from_json(input_path: Path, db_path: Path = DB_PATH) -> None
         product = ProductRecord(
             barcode=item.get("barcode"),
             product_name=item.get("product_name", ""),
+            product_name_en=item.get("product_name_en", ""),
             description=item.get("description", ""),
             commercial_text=item.get("commercial_text", ""),
             customs_text=item.get("customs_text", ""),
