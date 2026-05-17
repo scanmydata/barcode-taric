@@ -1,24 +1,28 @@
 [
   {
-    "input": "8000500020012",
-    "barcode": "8000500020012",
+    "input": "8447351005797",
+    "barcode": "8447351005797",
     "valid_ean13": true,
     "source": {
-      "source": "OpenFoodFacts",
+      "source": "GoUPC",
       "found": true,
-      "product_name": "Maxi Kinder Surprise 150g Hotwheels",
-      "brand": "Ferrero, Kinder",
-      "categories": "Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux",
-      "description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique"
+      "product_name": "Bombo Bar Juice Hyper Boost Pear Ice 10ml/120ml FS",
+      "brand": "Bombo",
+      "categories": "Juice",
+      "description": "No description found."
     },
-    "product_name": "Maxi Kinder Surprise 150g Hotwheels",
-    "product_description": "Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
-    "commercial_text": "Maxi Kinder Surprise 150g Hotwheels Snacks,Snacks sucrés,Cacao et dérivés,Confiseries,Aliments festifs,Confiseries chocolatées,Chocolats,Moulages en chocolat,Chocolats au lait,Aliments de Pâques,Oeufs en chocolat,Œufs de Pâques,Œufs en chocolat creux Ferrero, Kinder Confiserie recouverte de chocolat supérieur au lait contenant une surprise géante dans une capsule plastique",
-    "customs_text": "egg-shaped milk chocolate confection 150 containing plastic toy capsule easter egg",
+    "product_name": "Bombo Bar Juice Hyper Boost Pear Ice 10ml/120ml FS",
+    "product_description": "No description found.",
+    "commercial_text": "Bombo Bar Juice Hyper Boost Pear Ice 10ml/120ml FS Juice Bombo No description found.",
+    "customs_text": "pear fruit concentrate ready drink beverage",
+    "ai_inspection": {
+      "provider": "openrouter",
+      "corrected_customs_text": "pear fruit concentrate ready drink beverage"
+    },
     "match": {
-      "taric_code": "1704100010",
-      "hs4": "1704",
-      "description": "Sugar confectionery - Sweets"
+      "taric_code": "2106909800",
+      "hs4": "2106",
+      "description": "Food preparations not elsewhere specified"
     }
   }
 ]

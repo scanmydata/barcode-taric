@@ -859,6 +859,7 @@ def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_
     for entry in catalog:
         score = 0
         normalized_description = _normalize_text_for_matching(entry.description)
+        
         for keyword in entry.keywords:
             normalized_keyword = _normalize_text_for_matching(keyword)
             keyword_tokens = _tokenize_for_matching(normalized_keyword)
@@ -871,11 +872,29 @@ def best_taric_match(customs_text: str, catalog: Iterable[TaricEntry] = DEFAULT_
                 overlap = len(query_tokens.intersection(keyword_tokens))
                 score += overlap
 
-        # Disambiguate the nicotine/non-nicotine 2404 entries only when query is explicit AND has vaping-related keywords.
-        # This prevents false positives where "nicotine" appears in unrelated products.
-        vaping_keywords = {"vape", "eliquid", "liquid", "ecig", "ecigarette", "puff", "inhalation", "juice"}
+        # Disambiguation logic for specific categories
+        
+        # 1. Vaping context detection - be more specific about what constitutes vaping context
+        # "juice" alone is NOT a vaping keyword - it's a beverage/food keyword
+        # Only consider vaping context if there are explicit vaping-related terms
+        vaping_keywords = {"vape", "eliquid", "ecig", "ecigarette", "puff", "inhalation", "nicotine", "nic salt"}
         has_vaping_context = bool(query_tokens.intersection(vaping_keywords))
         
+        # 2. Beverage/food context detection
+        food_beverage_keywords = {"juice", "drink", "beverage", "flavor", "flavour", "fruit", "pear", "apple", "orange", "grape", "concentrate", "syrup", "aroma"}
+        has_food_context = bool(query_tokens.intersection(food_beverage_keywords))
+        
+        # 3. If we have food context but NO vaping context, penalize vape entries
+        if has_food_context and not has_vaping_context:
+            if entry.hs4.startswith("2404"):
+                score -= 10  # Strong penalty for vape entries when it's clearly a food product
+        
+        # 4. If we have vaping context, boost vape entries
+        if has_vaping_context:
+            if entry.hs4.startswith("2404"):
+                score += 5
+        
+        # 5. Disambiguate the nicotine/non-nicotine 2404 entries only when query is explicit AND has vaping-related keywords.
         if "nicotine" in query_tokens and has_vaping_context:
             if "with nicotine" in normalized_description:
                 score += 5

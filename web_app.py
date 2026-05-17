@@ -256,15 +256,15 @@ HTML_TEMPLATE = """
         </div>
         
         <div class="tab-buttons">
-            <button id="btnSingleTab" class="tab-btn active" type="button">📦 Single</button>
-            <button id="btnBatchTab" class="tab-btn" type="button">📊 Batch</button>
-            <button id="btnStoredTab" class="tab-btn" type="button">💾 Αποθηκευμένα</button>
+            <button id="btnSingleTab" class="tab-btn active" type="button" onclick="switchTab('single', this)">📦 Single</button>
+            <button id="btnBatchTab" class="tab-btn" type="button" onclick="switchTab('batch', this)">📊 Batch</button>
+            <button id="btnStoredTab" class="tab-btn" type="button" onclick="switchTab('stored', this)">💾 Αποθηκευμένα</button>
         </div>
         
         <div id="single" class="tab-content active">
             <div class="input-group">
                 <input type="text" id="singleInput" placeholder="Barcode ή προϊόν (Enter barcode or product description)">
-                <button id="btnSingleSearch" type="button">🔍 Αναζήτηση</button>
+                <button id="btnSingleSearch" type="button" onclick="singleLookup()">🔍 Αναζήτηση</button>
             </div>
         </div>
         
@@ -272,17 +272,17 @@ HTML_TEMPLATE = """
             <div style="margin-bottom: 15px; display: grid; gap: 10px;">
                 <label style="font-weight: bold; color: #333;">📁 Φόρτωση αρχείου:</label>
                 <input type="file" id="uploadFile" accept=".txt,.csv,.tsv,.xlsx" />
-                <button id="btnUploadFile" type="button" style="width: 100%;">⬆️ Φόρτωση και Επεξεργασία</button>
+                <button id="btnUploadFile" type="button" style="width: 100%;" onclick="uploadFile()">⬆️ Φόρτωση και Επεξεργασία</button>
             </div>
             <textarea id="batchInput" placeholder="Ένα ανά γραμμή (One per line)..."></textarea>
-            <button id="btnBatchSubmit" type="button" style="width: 100%;">📊 Αποστολή</button>
+            <button id="btnBatchSubmit" type="button" style="width: 100%;" onclick="batchLookup()">📊 Αποστολή</button>
         </div>
         
         <div id="stored" class="tab-content">
             <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-                <button id="btnLoadStored" type="button" style="flex: 1; background: #667eea;">🔄 Φόρτωση δεδομένων</button>
-                <button id="btnExportStored" type="button" style="flex: 1; background: #28a745;">💾 Εξαγωγή CSV</button>
-                <button id="btnClearFilters" type="button" style="flex: 1; background: #ff6b6b;">🔄 Ξεκαθάρισμα φίλτρων</button>
+                <button id="btnLoadStored" type="button" style="flex: 1; background: #667eea;" onclick="loadStoredProducts()">🔄 Φόρτωση δεδομένων</button>
+                <button id="btnExportStored" type="button" style="flex: 1; background: #28a745;" onclick="exportStoredProducts()">💾 Εξαγωγή CSV</button>
+                <button id="btnClearFilters" type="button" style="flex: 1; background: #ff6b6b;" onclick="clearTableFilters()">🔄 Ξεκαθάρισμα φίλτρων</button>
             </div>
             <div class="table-controls">
                 <div class="search-box">
@@ -316,39 +316,49 @@ HTML_TEMPLATE = """
     </div>
     
     <script>
+        // =====================================================
+        // UTILITY FUNCTIONS
+        // =====================================================
+        function escapeHtml(text) {
+            const map = {'&': '&', '<': '<', '>': '>', '"': '"', "'": '&#039;'};
+            return String(text).replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        function updateTableInfo(visibleCount) {
+            const totalRecords = window.allProducts ? window.allProducts.length : 0;
+            const visible = visibleCount !== undefined ? visibleCount : totalRecords;
+            
+            const infoSpan = document.getElementById('tableInfo');
+            if (infoSpan) {
+                infoSpan.textContent = 'Εμφανιζόμενες: ' + visible + ' / Σύνολο: ' + totalRecords;
+            }
+            
+            const visibleSpan = document.getElementById('visibleRecords');
+            if (visibleSpan) {
+                visibleSpan.textContent = visible;
+            }
+        }
+        
+        // =====================================================
+        // TAB SWITCHING
+        // =====================================================
         function switchTab(tab, button) {
-            document.querySelectorAll('.tab-content').forEach(e => e.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(e => e.classList.remove('active'));
+            console.log('switchTab called: ' + tab);
+            document.querySelectorAll('.tab-content').forEach(function(e) { e.classList.remove('active'); });
+            document.querySelectorAll('.tab-btn').forEach(function(e) { e.classList.remove('active'); });
             document.getElementById(tab).classList.add('active');
             if (button && button.classList) {
                 button.classList.add('active');
             }
             
-            // Load stored products when switching to stored tab
             if (tab === 'stored') {
                 loadStoredProducts();
             }
         }
-
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('btnSingleTab').addEventListener('click', function() { switchTab('single', this); });
-            document.getElementById('btnBatchTab').addEventListener('click', function() { switchTab('batch', this); });
-            document.getElementById('btnStoredTab').addEventListener('click', function() { switchTab('stored', this); });
-
-            document.getElementById('btnSingleSearch').addEventListener('click', singleLookup);
-            document.getElementById('btnUploadFile').addEventListener('click', uploadFile);
-            document.getElementById('btnBatchSubmit').addEventListener('click', batchLookup);
-            document.getElementById('btnLoadStored').addEventListener('click', loadStoredProducts);
-            document.getElementById('btnExportStored').addEventListener('click', exportStoredProducts);
-            document.getElementById('btnClearFilters').addEventListener('click', clearTableFilters);
-            document.getElementById('singleInput').addEventListener('keypress', function(event) {
-                if (event.key === 'Enter') {
-                    singleLookup();
-                }
-            });
-            document.getElementById('tableSearch').addEventListener('input', filterTable);
-        });
         
+        // =====================================================
+        // LOOKUP FUNCTIONS
+        // =====================================================
         function singleLookup() {
             const input = document.getElementById('singleInput').value.trim();
             if (!input) { alert('Παρακαλώ εισάγετε κάτι'); return; }
@@ -358,7 +368,7 @@ HTML_TEMPLATE = """
         function batchLookup() {
             const text = document.getElementById('batchInput').value.trim();
             if (!text) { alert('Παρακαλώ εισάγετε items'); return; }
-            const items = text.split('\\n').map(s => s.trim()).filter(s => s);
+            const items = text.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
             batchLookupInternal(items);
         }
         
@@ -374,38 +384,9 @@ HTML_TEMPLATE = """
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({items: items, ai_provider: aiProvider})
             })
-            .then(r => r.json())
-            .then(data => displayResults(data.results))
-            .catch(e => {
-                resultsDiv.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + e.message + '</div>';
-            });
-        }
-
-        function uploadFile() {
-            const fileInput = document.getElementById('uploadFile');
-            if (!fileInput.files.length) { alert('Παρακαλώ επιλέξτε ένα αρχείο'); return; }
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            formData.append('ai_provider', document.getElementById('aiProvider').value);
-
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Μεταφόρτωση αρχείου...</div>';
-            document.getElementById('aiStatus').textContent = '⏳ Uploading file...';
-
-            fetch('/api/lookup-file', {
-                method: 'POST',
-                body: formData
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.error) {
-                    resultsDiv.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + data.error + '</div>';
-                    return;
-                }
-                displayResults(data.results);
-            })
-            .catch(e => {
+            .then(function(r) { return r.json(); })
+            .then(function(data) { displayResults(data.results); })
+            .catch(function(e) {
                 resultsDiv.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + e.message + '</div>';
             });
         }
@@ -415,7 +396,7 @@ HTML_TEMPLATE = """
             resultsDiv.innerHTML = '';
             
             let matchCount = 0;
-            results.forEach(r => {
+            results.forEach(function(r) {
                 if (r.match && r.match.taric_code) matchCount++;
                 
                 const card = document.createElement('div');
@@ -446,22 +427,52 @@ HTML_TEMPLATE = """
             document.getElementById('totalCount').textContent = total;
             document.getElementById('matchCount').textContent = matchCount;
             document.getElementById('successRate').textContent = rate + '%';
-                    document.getElementById('aiStatus').textContent = '✅ Complete (' + matchCount + '/' + total + ' matched)';
+            document.getElementById('aiStatus').textContent = '✅ Complete (' + matchCount + '/' + total + ' matched)';
         }
         
-        function escapeHtml(text) {
-            const map = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'};
-            return String(text).replace(/[&<>"']/g, m => map[m]);
+        // =====================================================
+        // FILE UPLOAD
+        // =====================================================
+        function uploadFile() {
+            const fileInput = document.getElementById('uploadFile');
+            if (!fileInput.files.length) { alert('Παρακαλώ επιλέξτε ένα αρχείο'); return; }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('ai_provider', document.getElementById('aiProvider').value);
+
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Μεταφόρτωση αρχείου...</div>';
+            document.getElementById('aiStatus').textContent = '⏳ Uploading file...';
+
+            fetch('/api/lookup-file', {
+                method: 'POST',
+                body: formData
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.error) {
+                    resultsDiv.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + data.error + '</div>';
+                    return;
+                }
+                displayResults(data.results);
+            })
+            .catch(function(e) {
+                resultsDiv.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + e.message + '</div>';
+            });
         }
         
+        // =====================================================
+        // STORED PRODUCTS
+        // =====================================================
         function loadStoredProducts() {
             const container = document.getElementById('storedProductsContainer');
             container.innerHTML = '<div class="loading"><div class="spinner"></div>Φόρτωση αποθηκευμένων εγγραφών...</div>';
             
             fetch('/api/stored-products')
-                .then(r => r.json())
-                .then(data => displayStoredProductsTable(data.products))
-                .catch(e => {
+                .then(function(r) { return r.json(); })
+                .then(function(data) { displayStoredProductsTable(data.products); })
+                .catch(function(e) {
                     container.innerHTML = '<div class="result error"><strong>Σφάλμα:</strong> ' + e.message + '</div>';
                 });
         }
@@ -474,21 +485,20 @@ HTML_TEMPLATE = """
                 return;
             }
             
-            // Store products data globally for filtering/sorting
             window.allProducts = products;
             window.sortConfig = { key: 'barcode', direction: 'asc' };
             
             let html = '<div class="table-container"><table id="productsTable"><thead><tr>' +
-                '<th class="sortable" onclick="sortTable(\'barcode\', event)">Barcode</th>' +
-                '<th class="sortable" onclick="sortTable(\'taric_code\', event)">TARIC</th>' +
-                '<th class="sortable" onclick="sortTable(\'hs4\', event)">HS4</th>' +
-                '<th class="sortable" onclick="sortTable(\'product_name\', event)">Προϊόν</th>' +
-                '<th class="sortable" onclick="sortTable(\'description\', event)">Περιγραφή (ΕΛ)</th>' +
-                '<th class="sortable" onclick="sortTable(\'commercial_text\', event)">Περιγραφή (EN)</th>' +
-                '<th class="sortable" onclick="sortTable(\'source\', event)">Πηγή</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'barcode\')">Barcode</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'taric_code\')">TARIC</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'hs4\')">HS4</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'product_name\')">Προϊόν</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'description\')">Περιγραφή (ΕΛ)</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'commercial_text\')">Περιγραφή (EN)</th>' +
+                '<th class="sortable" onclick="sortTable(event, \'source\')">Πηγή</th>' +
                 '</tr></thead><tbody id="productsTableBody">';
             
-            products.forEach(p => {
+            products.forEach(function(p) {
                 const barcode = p.barcode ? escapeHtml(p.barcode) : '-';
                 const taric = p.taric_code ? escapeHtml(p.taric_code) : '-';
                 const hs4 = p.hs4 ? escapeHtml(p.hs4) : '-';
@@ -518,13 +528,12 @@ HTML_TEMPLATE = """
             updateTableInfo();
         }
         
-        function sortTable(column, event) {
+        function sortTable(event, column) {
             event.preventDefault();
             
             const currentDirection = window.sortConfig.direction;
             const isAsc = currentDirection === 'asc';
             
-            // Toggle direction if same column
             if (window.sortConfig.key === column) {
                 window.sortConfig.direction = isAsc ? 'desc' : 'asc';
             } else {
@@ -532,14 +541,13 @@ HTML_TEMPLATE = """
                 window.sortConfig.direction = 'asc';
             }
             
-            // Update header styling
-            document.querySelectorAll('table th').forEach(th => {
+            document.querySelectorAll('table th').forEach(function(th) {
                 th.classList.remove('sort-asc', 'sort-desc');
                 th.classList.add('sortable');
             });
             
             const headers = document.querySelectorAll('table th');
-            const columnIndex = Array.from(headers).findIndex(h => {
+            const columnIndex = Array.from(headers).findIndex(function(h) {
                 const colName = h.textContent.trim();
                 return (column === 'barcode' && colName === 'Barcode') ||
                        (column === 'taric_code' && colName === 'TARIC') ||
@@ -554,12 +562,10 @@ HTML_TEMPLATE = """
                 headers[columnIndex].classList.add(window.sortConfig.direction === 'asc' ? 'sort-asc' : 'sort-desc');
             }
             
-            // Sort the data
-            window.allProducts.sort((a, b) => {
+            window.allProducts.sort(function(a, b) {
                 let aVal = a[column] || '';
                 let bVal = b[column] || '';
                 
-                // Handle numeric comparisons
                 if (!isNaN(aVal) && !isNaN(bVal) && aVal !== '' && bVal !== '') {
                     aVal = parseFloat(aVal);
                     bVal = parseFloat(bVal);
@@ -573,11 +579,10 @@ HTML_TEMPLATE = """
                 return 0;
             });
             
-            // Re-render table
             const tbody = document.getElementById('productsTableBody');
             tbody.innerHTML = '';
             
-            window.allProducts.forEach(p => {
+            window.allProducts.forEach(function(p) {
                 const barcode = p.barcode ? escapeHtml(p.barcode) : '-';
                 const taric = p.taric_code ? escapeHtml(p.taric_code) : '-';
                 const hs4 = p.hs4 ? escapeHtml(p.hs4) : '-';
@@ -609,13 +614,12 @@ HTML_TEMPLATE = """
             const rows = tbody.getElementsByTagName('tr');
             let visibleCount = 0;
             
-            Array.from(rows).forEach(row => {
+            Array.from(rows).forEach(function(row) {
                 const cells = row.getElementsByTagName('td');
                 let matches = false;
                 
-                // Search in all cells
-                Array.from(cells).forEach(cell => {
-                    if (cell.textContent.toLowerCase().includes(searchInput)) {
+                Array.from(cells).forEach(function(cell) {
+                    if (cell.textContent.toLowerCase().indexOf(searchInput) !== -1) {
                         matches = true;
                     }
                 });
@@ -631,28 +635,12 @@ HTML_TEMPLATE = """
             updateTableInfo(visibleCount);
         }
         
-        function updateTableInfo(visibleCount) {
-            const totalRecords = window.allProducts ? window.allProducts.length : 0;
-            const visible = visibleCount !== undefined ? visibleCount : totalRecords;
-            
-            const infoSpan = document.getElementById('tableInfo');
-            if (infoSpan) {
-                infoSpan.textContent = `Εμφανιζόμενες: ${visible} / Σύνολο: ${totalRecords}`;
-            }
-            
-            const visibleSpan = document.getElementById('visibleRecords');
-            if (visibleSpan) {
-                visibleSpan.textContent = visible;
-            }
-        }
-        
         function clearTableFilters() {
             document.getElementById('tableSearch').value = '';
             filterTable();
             
-            // Reset sort
             window.sortConfig = { key: 'barcode', direction: 'asc' };
-            document.querySelectorAll('table th').forEach(th => {
+            document.querySelectorAll('table th').forEach(function(th) {
                 th.classList.remove('sort-asc', 'sort-desc');
                 th.classList.add('sortable');
             });
@@ -664,18 +652,17 @@ HTML_TEMPLATE = """
         
         function exportStoredProducts() {
             fetch('/api/stored-products')
-                .then(r => r.json())
-                .then(data => {
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
                     let products = data.products;
                     if (!products || products.length === 0) {
                         alert('Δεν υπάρχουν αποθηκευμένες εγγραφές για εξαγωγή');
                         return;
                     }
                     
-                    // Filter based on search if needed
                     const searchInput = document.getElementById('tableSearch').value.toLowerCase();
                     if (searchInput) {
-                        products = products.filter(p => {
+                        products = products.filter(function(p) {
                             const barcode = p.barcode ? String(p.barcode).toLowerCase() : '';
                             const taric = p.taric_code ? String(p.taric_code).toLowerCase() : '';
                             const hs4 = p.hs4 ? String(p.hs4).toLowerCase() : '';
@@ -684,13 +671,13 @@ HTML_TEMPLATE = """
                             const comm = p.commercial_text ? String(p.commercial_text).toLowerCase() : '';
                             const source = p.source ? String(p.source).toLowerCase() : '';
                             
-                            return barcode.includes(searchInput) || 
-                                   taric.includes(searchInput) ||
-                                   hs4.includes(searchInput) ||
-                                   name.includes(searchInput) ||
-                                   desc.includes(searchInput) ||
-                                   comm.includes(searchInput) ||
-                                   source.includes(searchInput);
+                            return barcode.indexOf(searchInput) !== -1 || 
+                                   taric.indexOf(searchInput) !== -1 ||
+                                   hs4.indexOf(searchInput) !== -1 ||
+                                   name.indexOf(searchInput) !== -1 ||
+                                   desc.indexOf(searchInput) !== -1 ||
+                                   comm.indexOf(searchInput) !== -1 ||
+                                   source.indexOf(searchInput) !== -1;
                         });
                     }
                     
@@ -699,9 +686,8 @@ HTML_TEMPLATE = """
                         return;
                     }
                     
-                    // Create CSV content
-                    let csv = 'Barcode,TARIC,HS4,Προϊόν,Περιγραφή (ΕΛ),Περιγραφή (EN),Πηγή\n';
-                    products.forEach(p => {
+                    let csv = 'Barcode,TARIC,HS4,Προϊόν,Περιγραφή (ΕΛ),Περιγραφή (EN),Πηγή\\n';
+                    products.forEach(function(p) {
                         const row = [
                             p.barcode || '',
                             p.taric_code || '',
@@ -710,11 +696,10 @@ HTML_TEMPLATE = """
                             p.description || '',
                             p.commercial_text || '',
                             p.source || ''
-                        ].map(cell => '"' + (cell + '').replace(/"/g, '""') + '"').join(',');
-                        csv += row + '\n';
+                        ].map(function(cell) { return '"' + (cell + '').replace(/"/g, '""') + '"'; }).join(',');
+                        csv += row + '\\n';
                     });
                     
-                    // Download CSV
                     const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
@@ -723,8 +708,40 @@ HTML_TEMPLATE = """
                     
                     alert('Εξαγωγή ' + products.length + ' εγγραφών ολοκληρώθηκε!');
                 })
-                .catch(e => alert('Σφάλμα κατά την εξαγωγή: ' + e.message));
+                .catch(function(e) { alert('Σφάλμα κατά την εξαγωγή: ' + e.message); });
         }
+        
+        // =====================================================
+        // INITIALIZATION - Run when DOM is ready
+        // =====================================================
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM Content Loaded - Initializing...');
+            
+            // Tab buttons
+            document.getElementById('btnSingleTab').addEventListener('click', function() { switchTab('single', this); });
+            document.getElementById('btnBatchTab').addEventListener('click', function() { switchTab('batch', this); });
+            document.getElementById('btnStoredTab').addEventListener('click', function() { switchTab('stored', this); });
+            
+            // Action buttons
+            document.getElementById('btnSingleSearch').addEventListener('click', singleLookup);
+            document.getElementById('btnUploadFile').addEventListener('click', uploadFile);
+            document.getElementById('btnBatchSubmit').addEventListener('click', batchLookup);
+            document.getElementById('btnLoadStored').addEventListener('click', loadStoredProducts);
+            document.getElementById('btnExportStored').addEventListener('click', exportStoredProducts);
+            document.getElementById('btnClearFilters').addEventListener('click', clearTableFilters);
+            
+            // Enter key on single input
+            document.getElementById('singleInput').addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    singleLookup();
+                }
+            });
+            
+            // Table search
+            document.getElementById('tableSearch').addEventListener('input', filterTable);
+            
+            console.log('All event listeners attached successfully!');
+        });
     </script>
 </body>
 </html>
@@ -739,7 +756,7 @@ def api_lookup():
     """API endpoint for TARIC lookup."""
     data = request.json
     items = data.get('items', [])
-    ai_provider = data.get('ai_provider', 'auto')  # Default to auto-select best free provider
+    ai_provider = data.get('ai_provider', 'auto')
     
     results = []
     for item in items:
@@ -817,12 +834,20 @@ def api_stored_products():
         return jsonify({'error': str(e), 'products': []}), 500
 
 if __name__ == '__main__':
+    import sys
+    # Enable UTF-8 encoding for Windows console
+    if sys.platform == 'win32':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except AttributeError:
+            pass
+    
     print("\n" + "="*60)
-    print("🌐 TARIC Web Interface Starting...")
+    print("TARIC Web Interface Starting...")
     print("="*60)
-    print("\n✅ Open your browser to:")
-    print("   → http://localhost:5000")
+    print("\nOpen your browser to:")
+    print("   -> http://localhost:5000")
     print("\nGreek/English support enabled for all EU TARIC chapters")
     print("="*60 + "\n")
     
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=True, use_debugger=True)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False, use_debugger=True)
