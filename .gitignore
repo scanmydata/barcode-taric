@@ -1,4 +1,32 @@
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
+
+# Environment & secrets
 .env
-db/taric_refresh_state.json
+
+# Virtualenv
+.venv/
+venv/
+
+# Build / installer output
+build/
+dist/
+installer/icon.ico
+
+# Local runtime data (per-user data dir when overridden into repo)
+.e2e/
+.mltest/
+.smoke_data/
+.gui_smoke/
+.guitest/
+.circabc/
+.circabctest/
+.final/
+logs/
+*.db
+*.db-wal
+*.db-shm
+model.joblib
