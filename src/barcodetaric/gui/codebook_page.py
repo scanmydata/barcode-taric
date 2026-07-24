@@ -66,10 +66,10 @@ class CodebookPage(QWidget):
         root.addLayout(tools)
 
         # --- πίνακας ---
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Barcode", "Περιγραφή (EL)", "TARIC", "HS4", "Πηγή", "Βεβ.", "✔"])
-        configure_table(self.table, stretch=[1])
+            ["Barcode", "Περιγραφή (EL)", "Description (EN)", "TARIC", "HS4", "Πηγή", "Βεβ.", "✔"])
+        configure_table(self.table, stretch=[1, 2])
         self.table.itemDoubleClicked.connect(lambda *_: self.edit_selected())
         root.addWidget(self.table)
 
@@ -115,11 +115,12 @@ class CodebookPage(QWidget):
     def _set_row(self, row: int, it: ClientItem) -> None:
         self.table.setItem(row, 0, QTableWidgetItem(it.barcode))
         self.table.setItem(row, 1, QTableWidgetItem(it.description_el or it.description_en))
-        self.table.setItem(row, 2, QTableWidgetItem(it.taric_code))
-        self.table.setItem(row, 3, QTableWidgetItem(it.hs4))
-        self.table.setItem(row, 4, QTableWidgetItem(it.taric_source))
-        self.table.setItem(row, 5, QTableWidgetItem(f"{it.confidence:.2f}" if it.confidence else ""))
-        self.table.setItem(row, 6, QTableWidgetItem("✔" if it.verified else ""))
+        self.table.setItem(row, 2, QTableWidgetItem(it.description_en or it.description_el))
+        self.table.setItem(row, 3, QTableWidgetItem(it.taric_code))
+        self.table.setItem(row, 4, QTableWidgetItem(it.hs4))
+        self.table.setItem(row, 5, QTableWidgetItem(it.taric_source))
+        self.table.setItem(row, 6, QTableWidgetItem(f"{it.confidence:.2f}" if it.confidence else ""))
+        self.table.setItem(row, 7, QTableWidgetItem("✔" if it.verified else ""))
 
     def _selected_item(self) -> ClientItem | None:
         rows = self.table.selectionModel().selectedRows()

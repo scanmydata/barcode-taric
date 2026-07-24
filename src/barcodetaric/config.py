@@ -22,19 +22,27 @@ REG_PATH = r"Software\scanmydata\BarcodeTaric"
 # Προεπιλογές ρυθμίσεων. Το settings.json υπερισχύει, το env υπερισχύει όλων.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
-    "ai_provider_order": ["openrouter", "duckduckgo", "pollinations"],
+    # OpenRouter πρώτο (δωρεάν :free μοντέλα με key). Το Groq μένει ως επιλογή αλλά
+    # θέλει login/κλειδί που δεν είναι πάντα διαθέσιμο. Τα no-key (pollinations/
+    # duckduckgo) χρεώνουν/περιορίζονται πλέον (402/429) — έσχατο fallback.
+    "ai_provider_order": ["openrouter", "groq", "duckduckgo", "pollinations"],
     "openrouter_model": "meta-llama/llama-3.3-70b-instruct:free",
     "openrouter_api_key": "",
     "google_cse_api_key": "",
     "google_cse_id": "",
-    "web_search_order": ["googlesearch", "google_cse", "duckduckgo"],
+    # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα
+    # χωρίς API key — github.com/karust/openserp. Αν τρέχει, προτιμάται πρώτο.
+    "openserp_url": "http://127.0.0.1:7000",
+    "openserp_engine": "google",
+    "openserp_timeout": 45,      # ο headless browser είναι αργός στο πρώτο query
+    "web_search_order": ["openserp", "googlesearch", "google_cse", "duckduckgo"],
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,
     "auto_update_taric": True,   # έλεγχος/ενημέρωση ονοματολογίας από ΕΕ στην εκκίνηση
     "business_portal_key": "",   # GEMI opendata (ΑΦΜ -> στοιχεία εταιρείας)
-    "groq_api_key": "",  # μελλοντικά — δεν χρησιμοποιείται ακόμη
-    "groq_enabled": False,
+    "groq_api_key": "",          # δωρεάν key από console.groq.com (χωρίς κάρτα)
+    "groq_model": "llama-3.3-70b-versatile",
 }
 
 

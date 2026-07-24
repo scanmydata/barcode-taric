@@ -88,7 +88,7 @@ def list_free_models(timeout: int = 15) -> list[str]:
 
 def test_providers(timeout: int = 12) -> list[tuple[str, bool, str]]:
     """Debugger: δοκιμάζει κάθε provider της αλυσίδας & επιστρέφει (name, ok, μήνυμα)."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "duckduckgo", "pollinations"]
+    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
     results = []
     for name in order:
         fn = _PROVIDERS.get(name)
@@ -120,16 +120,20 @@ def _duckduckgo(prompt: str, timeout: int) -> Optional[str]:
 
 
 def _groq(prompt: str, timeout: int) -> Optional[str]:
-    # Μελλοντικά — ο χρήστης δεν μπορεί προς το παρόν να κάνει login στο Groq.
-    if not SETTINGS.get("groq_enabled"):
-        return None
+    """Groq: δωρεάν, γρήγορο, αξιόπιστο (llama-3.3-70b). Χρειάζεται δωρεάν API key
+    από console.groq.com (χωρίς κάρτα). Είναι η πιο αξιόπιστη δωρεάν επιλογή τώρα
+    που τα no-key providers (Pollinations/DuckDuckGo) χρεώνουν ή περιορίζονται."""
     api_key = SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY")
     if not api_key:
         return None
-    payload = {"model": "llama-3.3-70b-versatile",
-               "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    model = SETTINGS.get("groq_model") or "llama-3.3-70b-versatile"
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
     response = http_json(GROQ_URL, method="POST", body=payload,
-                         headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+                         headers={"Authorization": f"Bearer {api_key}",
+                                  "Content-Type": "application/json"}, timeout=timeout)
+    if isinstance(response, dict) and response.get("error"):
+        debug(f"Groq error: {response.get('error')}")
+        return None
     return _parse_ai_text(response)
 
 
@@ -143,17 +147,19 @@ _PROVIDERS = {
 
 def ai_available() -> bool:
     """True αν υπάρχει τουλάχιστον ένας provider που μπορεί να απαντήσει."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "duckduckgo", "pollinations"]
-    if "pollinations" in order:
-        return True  # πάντα διαθέσιμο, χωρίς key
+    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
     if "openrouter" in order and (SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")):
         return True
-    return "duckduckgo" in order
+    if "groq" in order and (SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY")):
+        return True
+    # Σημ.: τα no-key (pollinations/duckduckgo) συχνά χρεώνουν/περιορίζονται (402/429),
+    # αλλά τα κρατάμε ως έσχατο fallback — δηλώνουμε «διαθέσιμο» αν είναι στη λίστα.
+    return "pollinations" in order or "duckduckgo" in order
 
 
 def chat(prompt: str, *, timeout: int = 20, max_len: int = 600) -> Optional[str]:
     """Καλεί τους providers με τη σειρά ρυθμίσεων· επιστρέφει το πρώτο μη-κενό."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "duckduckgo", "pollinations"]
+    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
     for name in order:
         fn = _PROVIDERS.get(name)
         if fn is None:
@@ -233,6 +239,64 @@ def infer_product(barcode: str, web_context: str = "") -> Optional[dict[str, Any
         )
     raw = chat(prompt, timeout=25, max_len=800)
     return _extract_json(raw)
+
+
+def confirm_product(*, barcode: str = "", candidate_name: str = "",
+                    candidate_description: str = "", brand: str = "",
+                    categories: str = "", web_context: str = "") -> Optional[dict[str, Any]]:
+    """Διασταυρώνει barcode-DB + web αποτελέσματα και «κλειδώνει» την ταυτότητα.
+
+    Δίνει στο AII όλο το σύνολο (υποψήφιο όνομα από βάσεις barcode + snippets από
+    web αναζήτηση για το barcode ΚΑΙ για την ονομασία) και ζητά ΕΝΑ δομημένο JSON:
+
+      name_el / name_en : σύντομη ΟΝΟΜΑΣΙΑ προϊόντος (τι είναι), όχι αναλυτική
+                          περιγραφή — π.χ. «Φυσικό μεταλλικό νερό Θέρισσο».
+      is_product        : true μόνο για υλικά αγαθά (υπηρεσίες -> false, χωρίς TARIC).
+      customs_hint      : σύντομη αγγλική φράση υλικού/είδους για την κατάταξη TARIC
+                          (εσωτερική, δεν εμφανίζεται) — π.χ. «natural mineral water,
+                          bottled, non-carbonated» ώστε να μη μπερδευτεί με «toilet water».
+      confidence        : 0..1 — πόσο συμφωνούν οι πηγές.
+
+    Επιστρέφει dict ή None (αν το AI δεν είναι διαθέσιμο/απάντησε άκυρα).
+    """
+    if not ai_available():
+        return None
+    known = "\n".join(p for p in (
+        f"Barcode: {barcode}" if barcode else "",
+        f"Υποψήφια ονομασία (από βάσεις barcode): {candidate_name}" if candidate_name else "",
+        f"Μάρκα: {brand}" if brand else "",
+        f"Κατηγορίες: {categories}" if categories else "",
+        f"Πρόσθετη περιγραφή πηγής: {candidate_description}" if candidate_description else "",
+    ) if p)
+    prompt = (
+        "Είσαι βοηθός τελωνειακής ταξινόμησης. Σου δίνω ό,τι ξέρουμε για ένα προϊόν από "
+        "βάσεις barcode ΚΑΙ αποτελέσματα αναζήτησης web (για το barcode και για την ονομασία). "
+        "Διασταύρωσέ τα και προσδιόρισε ΤΙ ΑΚΡΙΒΩΣ είναι το προϊόν. "
+        "Επίστρεψε ΜΟΝΟ έγκυρο JSON με κλειδιά: "
+        "name_el (σύντομη ΟΝΟΜΑΣΙΑ στα ελληνικά, ΜΟΝΟ τι είναι το προϊόν, όχι αναλυτική περιγραφή), "
+        "name_en (η ίδια σύντομη ονομασία στα αγγλικά), "
+        "is_product (true αν είναι υλικό αγαθό που κατατάσσεται σε TARIC· false αν είναι υπηρεσία/άυλο), "
+        "customs_hint (σύντομη ΑΓΓΛΙΚΗ φράση με το είδος/υλικό/χρήση για την κατάταξη, π.χ. "
+        "'natural mineral water, bottled, still'), "
+        "confidence (0..1, πόσο συμφωνούν οι πηγές). "
+        "Αν οι πηγές είναι ασαφείς/αντιφατικές, βάλε χαμηλό confidence και μην εφευρίσκεις. "
+        "ΜΗΝ μπερδέψεις πόσιμο/μεταλλικό νερό (τρόφιμο) με 'toilet water'/άρωμα.\n\n"
+        f"{known}\n\n{web_context or '(δεν υπάρχουν web αποτελέσματα)'}"
+    )
+    data = _extract_json(chat(prompt, timeout=30, max_len=700))
+    if not isinstance(data, dict):
+        return None
+    try:
+        confidence = float(data.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "name_el": str(data.get("name_el") or "").strip(),
+        "name_en": str(data.get("name_en") or "").strip(),
+        "is_product": bool(data.get("is_product", True)),
+        "customs_hint": str(data.get("customs_hint") or "").strip(),
+        "confidence": max(0.0, min(1.0, confidence)),
+    }
 
 
 def rank_taric(description: str, candidates: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
