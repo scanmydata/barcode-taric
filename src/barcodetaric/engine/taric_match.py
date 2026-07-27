@@ -130,6 +130,7 @@ def _score(query_tokens: set[str], row) -> float:
     return coverage + 0.1 * brevity
 
 
+<<<<<<< HEAD
 def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
                    top: int = 5) -> list:
     query = f"{description_el} {description_en}".strip()
@@ -156,13 +157,54 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
 
     scored = sorted(
         ((_score(qtokens, r), r) for r in seen.values()), key=lambda x: x[0], reverse=True
+=======
+# --- Chapter prior (χωρίς AI) -------------------------------------------------
+# Όταν ξέρουμε τη ΦΥΣΗ της πηγής (π.χ. OpenFoodFacts = τρόφιμο/ποτό), μια
+# ομώνυμη λέξη όπως «water» δεν πρέπει να μας στείλει σε «toilet water» (κεφ. 33
+# αρώματα). Δίνουμε bonus στα εύλογα κεφάλαια και ποινή στα απίθανα. Αυτό είναι
+# η δικλείδα ασφαλείας ΟΤΑΝ το AI δεν είναι διαθέσιμο.
+_FOOD_CHAPTERS = {f"{i:02d}" for i in range(1, 25)}         # 01..24 τρόφιμα/ποτά
+_NON_FOOD_TRAP_CHAPTERS = {"33", "34"}                       # αρώματα/καλλυντικά, σαπούνια
+
+
+def _chapter_prior(source: str, categories: str) -> tuple[set[str], set[str]]:
+    """(preferred, penalized) HS2 κεφάλαια από την πηγή/κατηγορίες."""
+    src = (source or "").lower()
+    if "openfoodfacts" in src:
+        return _FOOD_CHAPTERS, _NON_FOOD_TRAP_CHAPTERS
+    return set(), set()
+
+
+def _apply_chapter_prior(score: float, row, preferred: set[str], penalized: set[str]) -> float:
+    if not preferred and not penalized:
+        return score
+    chapter = (getattr(row, "hs4", "") or "")[:2]
+    if chapter and preferred and chapter in preferred:
+        return score * 1.6
+    if chapter and penalized and chapter in penalized:
+        return score * 0.4
+    return score
+
+
+def fts_candidates(description_el: str, description_en: str, *, top: int = 5,
+                   source: str = "", categories: str = "") -> list:
+    query = f"{description_el} {description_en}".strip()
+    if not query:
+        return []
+    rows = repo.search_taric(query, limit=60)
+    qtokens = _tokens(query)
+    preferred, penalized = _chapter_prior(source, categories)
+    scored = sorted(
+        ((_apply_chapter_prior(_score(qtokens, r), r, preferred, penalized), r) for r in rows),
+        key=lambda x: x[0], reverse=True,
+>>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     )
     return [(s, r) for s, r in scored if s > 0][:top]
 
 
 def match(description_el: str, description_en: str = "", *, barcode: str = "",
           brand: str = "", quantity: str = "", categories: str = "",
-          use_ai: bool = True) -> MatchResult:
+          source: str = "", use_ai: bool = True) -> MatchResult:
     description_el = (description_el or "").strip()
     description_en = (description_en or "").strip()
     combined = f"{description_el} {description_en}".strip()
@@ -185,10 +227,15 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                confidence=pred.confidence, taric_source="ml",
                                ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
 
+<<<<<<< HEAD
     # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (χωρίς τη μάρκα ως κριτήριο).
     # top=8: δίνουμε περισσότερους υποψηφίους στο AI rank ώστε να υπάρχει ο σωστός ακόμη κι όταν
     # το keyword scoring τον βάζει 3ο-8ο (π.χ. γάλα/καφές κάτω από παρόμοιες γραμμές).
     cands = fts_candidates(description_el, description_en, brand=brand, top=8)
+=======
+    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (με chapter prior από την πηγή)
+    cands = fts_candidates(description_el, description_en, top=6, source=source, categories=categories)
+>>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     cand_dicts = [{"code": r.code,
                    "description_el": r.description_path_el or r.description_el,
                    "description_en": r.description_path_en or r.description_en,

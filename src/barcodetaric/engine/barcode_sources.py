@@ -35,20 +35,64 @@ def is_valid_ean13(code: str) -> bool:
     return code.isdigit() and len(code) == 13 and ean13_checksum(code[:12]) == int(code[-1])
 
 
+def ean8_checksum(first7: str) -> int:
+    nums = [int(d) for d in first7]
+    total = 3 * sum(nums[0::2]) + sum(nums[1::2])
+    return (10 - (total % 10)) % 10
+
+
+def is_valid_ean8(code: str) -> bool:
+    return code.isdigit() and len(code) == 8 and ean8_checksum(code[:7]) == int(code[-1])
+
+
 def normalize_to_ean13(code: str) -> str | None:
+    """Κανονική μορφή για αποθήκευση/dedup.
+
+    ΠΡΟΣΟΧΗ: ένα EAN-8 (π.χ. 64320458) ΔΕΝ γεμίζει με μηδενικά — το GTIN-8 είναι
+    διαφορετικός κωδικός από ένα zero-padded GTIN-13, και οι βάσεις barcode το
+    ευρετηριάζουν με τα 8 ψηφία. Το κρατάμε ως έχει, αλλιώς τα lookups αστοχούν.
+    """
     digits = re.sub(r"\D", "", code)
     if len(digits) == 13:
         return digits
     if len(digits) == 12:
         return f"{digits}{ean13_checksum(digits)}"
     if len(digits) == 8:
-        return digits.rjust(13, "0")
+        return digits
     return None
+
+
+def barcode_variants(code: str) -> list[str]:
+    """Μορφές του κωδικού που αξίζει να δοκιμαστούν στις πηγές (raw + κανονική)."""
+    digits = re.sub(r"\D", "", code)
+    variants: list[str] = []
+    for v in (digits, normalize_to_ean13(code)):
+        if v and v not in variants:
+            variants.append(v)
+    return variants
 
 
 def looks_like_barcode(text: str) -> bool:
     digits = re.sub(r"\D", "", text)
     return len(digits) in (8, 12, 13) and len(digits) == len(text.strip())
+
+
+# Ονόματα που δεν είναι προϊόντα αλλά τίτλοι/σελίδες των ίδιων των sites αναζήτησης
+# barcode. Οι scrapers τα επέστρεφαν κατά λάθος ως «προϊόν» όταν δεν υπήρχε match.
+_JUNK_NAME_PATTERNS = (
+    "ean-search", "ean search", "barcode lookup", "barcodelookup", "upcitemdb",
+    "go-upc", "go upc", "isbn lookup", "gtin", "lookup and api", "search our",
+    "billion products", "no product", "not found", "database with over",
+    "buy a barcode", "buyabarcode", "upc lookup", "product search",
+)
+
+
+def _is_junk_name(name: str | None) -> bool:
+    """True αν το «όνομα» είναι τίτλος site/σελίδας «δεν βρέθηκε», όχι προϊόν."""
+    if not name or len(name.strip()) < 2:
+        return True
+    low = name.lower()
+    return any(p in low for p in _JUNK_NAME_PATTERNS)
 
 
 def _extract_label_pairs(html_text: str) -> dict[str, str]:
@@ -117,9 +161,11 @@ def fetch_go_upc(barcode: str) -> dict[str, Any]:
     desc_m = re.search(r'<h2>\s*Description\s*</h2>\s*<span>(.*?)</span>', html_text, re.S | re.I)
     pairs = _extract_label_pairs(html_text)
     name = unescape_text(re.sub(r"<[^>]+>", " ", name_m.group(1))) if name_m else None
+    if _is_junk_name(name):
+        name = None
     if not name and not pairs:
         return {"source": "GoUPC", "found": False}
-    return {"source": "GoUPC", "found": True, "product_name": name, "brand": pairs.get("brand"),
+    return {"source": "GoUPC", "found": bool(name or pairs), "product_name": name, "brand": pairs.get("brand"),
             "categories": pairs.get("category"),
             "description": unescape_text(desc_m.group(1)) if desc_m else None}
 
@@ -139,6 +185,12 @@ def fetch_ean_search(barcode: str) -> dict[str, Any]:
     meta_m = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']',
                        html_text, re.S | re.I)
     desc = unescape_text(meta_m.group(1)) if meta_m else None
+    # Αν το «όνομα» είναι ο τίτλος της ίδιας της σελίδας EAN-Search (χωρίς
+    # πραγματικό match), μη το περάσεις ως προϊόν.
+    if _is_junk_name(name):
+        name = None
+    if _is_junk_name(desc):
+        desc = None
     return {"source": "EANSearch", "found": bool(name or desc), "product_name": name,
             "brand": None, "categories": None, "description": desc}
 
@@ -155,6 +207,8 @@ def fetch_barcodelookup(barcode: str) -> dict[str, Any]:
     name = unescape_text(title_m.group(1)) if title_m else None
     if name:
         name = re.sub(r"\s*[—-]\s*Barcode Lookup$", "", name, flags=re.I).strip() or None
+    if _is_junk_name(name):
+        name = None
     pairs = _extract_label_pairs(html_text)
     desc_m = re.search(r'<h2[^>]*>\s*Description\s*</h2>\s*<div[^>]*>(.*?)</div>',
                        html_text, re.S | re.I)
@@ -218,6 +272,7 @@ def _web_context_for(result: dict[str, Any], barcode: str) -> str:
 
 
 def fetch_product(barcode: str, *, use_ai: bool = True) -> dict[str, Any]:
+<<<<<<< HEAD
     """barcode -> στοιχεία προϊόντος. Δομημένες πηγές πρώτα, μετά Google enrichment.
 
     1) Δοκίμασε τις δομημένες πηγές (OpenFoodFacts/UPC/scrapers) για όνομα/μάρκα/κατηγορία.
@@ -247,3 +302,36 @@ def fetch_product(barcode: str, *, use_ai: bool = True) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             debug(f"ai_infer_from_web raised: {exc}")
     return best
+=======
+    """Επιστρέφει το πρώτο έγκυρο αποτέλεσμα από όλες τις πηγές.
+
+    Δοκιμάζει και τις εναλλακτικές μορφές του κωδικού (raw + κανονική) ώστε ένα
+    EAN-8 να μη «χαθεί» ως λάθος zero-padded EAN-13. Αποτελέσματα με «σκουπίδι»
+    όνομα (τίτλοι site) απορρίπτονται.
+    """
+    variants = barcode_variants(barcode) or [barcode]
+    for fetcher in _FETCHERS:
+        for variant in variants:
+            try:
+                result = fetcher(variant)
+            except Exception as exc:  # noqa: BLE001
+                debug(f"{fetcher.__name__} raised: {exc}")
+                continue
+            if not result.get("found"):
+                continue
+            if _is_junk_name(result.get("product_name")) and not (result.get("description") and not _is_junk_name(result.get("description"))):
+                debug(f"{fetcher.__name__} returned junk name for {variant}, skipping")
+                continue
+            debug(f"Product found via {result.get('source')} for {variant}")
+            return result
+    # Τελευταία γραμμή: AI web-inference (όταν οι δομημένες πηγές δεν βρήκαν τίποτα).
+    if use_ai and ai.ai_available():
+        try:
+            primary = ai_infer_from_web(barcode)
+        except Exception as exc:  # noqa: BLE001
+            debug(f"ai_infer_from_web raised: {exc}")
+            primary = None
+        if primary and primary.get("found") and not _is_junk_name(primary.get("product_name")):
+            return primary
+    return {"source": "none", "found": False}
+>>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33

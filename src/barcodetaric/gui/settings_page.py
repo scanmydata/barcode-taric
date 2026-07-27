@@ -67,16 +67,15 @@ class SettingsPage(QWidget):
         smart_btn.clicked.connect(self._smart_pick_model)
         model_l.addWidget(smart_btn)
         self.provider_order = QLineEdit(", ".join(SETTINGS.get("ai_provider_order") or []))
-        ai_l.addRow("OpenRouter API key", self.openrouter_key)
-        ai_l.addRow("Μοντέλο (:free)", model_row)
-        ai_l.addRow("Σειρά providers", self.provider_order)
-        ai_l.addRow("", muted("Επιτρέπονται ΜΟΝΟ δωρεάν μοντέλα — το :free προστίθεται αυτόματα."))
-        self.groq_enabled = QCheckBox("Ενεργοποίηση Groq (μελλοντικά)")
-        self.groq_enabled.setChecked(bool(SETTINGS.get("groq_enabled")))
         self.groq_key = QLineEdit(str(SETTINGS.get("groq_api_key") or ""))
         self.groq_key.setEchoMode(QLineEdit.Password)
-        ai_l.addRow("", self.groq_enabled)
-        ai_l.addRow("Groq API key", self.groq_key)
+        self.groq_key.setPlaceholderText("gsk_… (προαιρετικό)")
+        ai_l.addRow("OpenRouter API key", self.openrouter_key)
+        ai_l.addRow("Μοντέλο (:free)", model_row)
+        ai_l.addRow("", muted("Συνιστώμενο: OpenRouter με δωρεάν μοντέλο (:free προστίθεται αυτόματα). "
+                              "Τα no-key (Pollinations/DuckDuckGo) πλέον χρεώνουν/περιορίζονται (402/429)."))
+        ai_l.addRow("Groq API key (προαιρ.)", self.groq_key)
+        ai_l.addRow("Σειρά providers", self.provider_order)
         root.addWidget(ai_card)
 
         # --- Web search ---
@@ -84,10 +83,20 @@ class SettingsPage(QWidget):
         web_l = QFormLayout(web_card)
         web_l.setContentsMargins(18, 16, 18, 16)
         web_l.setSpacing(10)
+<<<<<<< HEAD
         web_l.addRow(h2("Web search"))
         web_l.addRow("", muted("SearXNG → DuckDuckGo → headless Chrome (Google) → googlesearch → CSE"))
         self.searxng_url = QLineEdit(str(SETTINGS.get("searxng_url") or ""))
         self.searxng_url.setPlaceholderText("https://searx.example.org  ή  http://127.0.0.1:8888")
+=======
+        web_l.addRow(h2("Web search (Google results)"))
+        web_l.addRow("", muted("OpenSERP → googlesearch → Google CSE → DuckDuckGo"))
+        self.openserp_url = QLineEdit(str(SETTINGS.get("openserp_url") or ""))
+        self.openserp_url.setPlaceholderText("http://127.0.0.1:7000 (τοπικός OpenSERP server)")
+        web_l.addRow("OpenSERP URL", self.openserp_url)
+        web_l.addRow("", muted("Πραγματικά Google αποτελέσματα χωρίς key. Εκκίνηση:  "
+                               "docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000"))
+>>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
         self.cse_key = QLineEdit(str(SETTINGS.get("google_cse_api_key") or ""))
         self.cse_key.setEchoMode(QLineEdit.Password)
         self.cse_id = QLineEdit(str(SETTINGS.get("google_cse_id") or ""))
@@ -256,10 +265,16 @@ class SettingsPage(QWidget):
         SETTINGS.set("openrouter_api_key", self.openrouter_key.text().strip())
         SETTINGS.set("openrouter_model", ai._ensure_free(self.openrouter_model.currentText().strip()))
         order = [p.strip() for p in self.provider_order.text().split(",") if p.strip()]
+<<<<<<< HEAD
         SETTINGS.set("ai_provider_order", order or list(ai._DEFAULT_ORDER))
         SETTINGS.set("groq_enabled", self.groq_enabled.isChecked())
         SETTINGS.set("groq_api_key", self.groq_key.text().strip())
         SETTINGS.set("searxng_url", self.searxng_url.text().strip())
+=======
+        SETTINGS.set("ai_provider_order", order or ["groq", "openrouter", "duckduckgo", "pollinations"])
+        SETTINGS.set("groq_api_key", self.groq_key.text().strip())
+        SETTINGS.set("openserp_url", self.openserp_url.text().strip() or "http://127.0.0.1:7000")
+>>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
         SETTINGS.set("google_cse_api_key", self.cse_key.text().strip())
         SETTINGS.set("google_cse_id", self.cse_id.text().strip())
         web_order = [t.strip() for t in self.web_order.text().split(",") if t.strip()]
