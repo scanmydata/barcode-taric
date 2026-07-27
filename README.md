@@ -6,8 +6,9 @@
 
 - **Πελατολόγιο με CRUD** — διαχείριση πελατών, ανά πελάτη δικό του κωδικολόγιο.
 - **Import κωδικολογίου από Excel/CSV** (auto-detect στηλών barcode/περιγραφή) ή **add-by-barcode**
-  με αναζήτηση σε πολλαπλές πηγές + πραγματικά **Google results** (googlesearch → Google CSE → DuckDuckGo)
+  με αναζήτηση σε πολλαπλές πηγές + πραγματικά **web results** (SearXNG → googlesearch → Google CSE → DuckDuckGo)
   και AI web-inference όταν δεν βρίσκεται περιγραφή.
+- **Αυτόματη άντληση στοιχείων εταιρείας από ΑΦΜ** (ΓΕΜΗ) — μόλις συμπληρωθεί 9ψήφιος ΑΦΜ στη φόρμα πελάτη.
 - **Κεντρική βάση γνώσης** (barcode → περιγραφή → TARIC) με γρήγορο full-text search, που μεγαλώνει με τη χρήση.
 - **Έγκυρο TARIC** από την **επίσημη ΕΕ ονοματολογία** (Combined Nomenclature) — import + έλεγχος ενημερώσεων,
   offline matching με FTS + AI ranking/rationalization.
@@ -17,9 +18,66 @@
 
 ## Δωρεάν AI
 
-Χρησιμοποιεί μόνο δωρεάν providers: **OpenRouter** (`:free` μοντέλα, χρειάζεται API key) →
-**DuckDuckGo** → **Pollinations** (χωρίς key). Το **Groq** υπάρχει ως μελλοντική (απενεργοποιημένη) επιλογή.
-Τα κλειδιά μπαίνουν από τη σελίδα **Ρυθμίσεις**.
+Χρησιμοποιεί δωρεάν providers με σειρά (`ai_provider_order`): **OpenRouter** (`:free` μοντέλα,
+χρειάζεται API key) → **custom** (προαιρετικό δικό σου endpoint) → **DuckDuckGo** → **Pollinations**.
+Το **Groq** υπάρχει ως μελλοντική (απενεργοποιημένη) επιλογή. Τα κλειδιά μπαίνουν από τη σελίδα **Ρυθμίσεις**.
+
+> ⚠️ **Το free-model landscape του OpenRouter αλλάζει συχνά** — μοντέλα αποσύρονται και το API
+> επιστρέφει `404`. Το app το χειρίζεται **αυτόματα**: αν το ρυθμισμένο μοντέλο αποτύχει (404),
+> δοκιμάζει εναλλακτικά (`openai/gpt-oss-20b:free` → `openrouter/free`) και «θυμάται» αυτό που
+> δουλεύει για τη session. Στις **Ρυθμίσεις** υπάρχει **«Έξυπνη επιλογή»** που δοκιμάζει τα κορυφαία
+> δωρεάν μοντέλα και επιλέγει ένα που απαντά, καθώς και **«Λίστα μοντέλων»** (φιλτραρισμένα chat
+> μοντέλα, χωρίς audio/image/embeddings). Default: `openai/gpt-oss-20b:free`.
+
+### Custom AI endpoint (local LLM / on-prem)
+
+Στις **Ρυθμίσεις → Custom AI endpoint** ορίζεις **δικό σου OpenAI-συμβατό endpoint** (Base URL,
+μοντέλο, προαιρετικό key, timeout). Βάλε `custom` στη σειρά providers. Δεν περιορίζεται σε `:free`.
+
+**Παράδειγμα — Ollama (qwen) μέσω Cloudflare tunnel:**
+
+```bash
+ollama serve                                   # τοπικό Ollama (OpenAI API στο :11434)
+ollama pull qwen2.5:7b
+cloudflared tunnel --url http://localhost:11434   # δίνει https://xxx.trycloudflare.com
+```
+
+Στις Ρυθμίσεις: **Base URL** = `https://xxx.trycloudflare.com/v1` (το `/chat/completions`
+προστίθεται αυτόματα), **Μοντέλο** = `qwen2.5:7b`, **API key** κενό, **Timeout** ~120s (local LLM
+αργεί στο πρώτο token).
+
+## Web search (SearXNG + headless Chrome + fallbacks)
+
+Τα web results έρχονται σε επίπεδα (`web_search_order`, default:
+`searxng → duckduckgo → headless → googlesearch → google_cse`):
+
+1. **SearXNG** — meta-search ([searxng/searxng](https://github.com/searxng/searxng)) με JSON API.
+   Όρισε `searxng_url` στις Ρυθμίσεις (self-host `http://127.0.0.1:8888` **προτείνεται** — πολλά public
+   instances κλείνουν το `format=json`). Ίδιο endpoint με το [mcp-searxng](https://github.com/ihor-sokoliuk/mcp-searxng).
+2. **DuckDuckGo HTML** — γρήγορο & αξιόπιστο fallback χωρίς key/όρια.
+3. **headless Chrome (Google)** — πραγματικό Chrome μέσω **Selenium** που εκτελεί JS και διαβάζει τα
+   οργανικά αποτελέσματα της Google (παρακάμπτει το block του απλού scraping). Θέλει
+   `pip install -e ".[headless]"` + εγκατεστημένο Chrome. ⚠️ Η Google **rate-limit-άρει** με CAPTCHA
+   (`/sorry`) σε πολλά διαδοχικά queries — τότε το tier επιστρέφει κενό και πέφτει σε DuckDuckGo.
+   Για Google-first, βάλε `headless` πρώτο στη «Σειρά web tiers»· `headless_headed=true` = ορατό
+   παράθυρο (λιγότερο ανιχνεύσιμο ως bot).
+4. **googlesearch-python** — απλό scraping (η Google συχνά το μπλοκάρει → κενά αποτελέσματα).
+5. **Google CSE JSON API** — αν έχεις `google_cse_api_key` + `google_cse_id` (100 queries/μέρα δωρεάν).
+
+Το web search χρησιμοποιείται και **στη λήψη περιγραφής από barcode**: αφού μια δομημένη πηγή
+(OpenFoodFacts κ.λπ.) δώσει όνομα, γίνεται αναζήτηση στο web **με το όνομα** και τα snippets
+τροφοδοτούν το AI enrichment για ακριβέστερη περιγραφή → καλύτερο TARIC.
+
+Debug: **Ρυθμίσεις → Debugger → Έλεγχος web search** δείχνει ποιο tier απαντά.
+
+### Self-host SearXNG (προαιρετικό, με Docker)
+
+```bash
+docker run -d --name searxng -p 8888:8080 \
+  -e "SEARXNG_BASE_URL=http://localhost:8888/" searxng/searxng
+```
+
+Στο `settings.yml` του instance βεβαιώσου ότι το `search.formats` περιλαμβάνει `json`.
 
 ## Εκτέλεση (dev)
 

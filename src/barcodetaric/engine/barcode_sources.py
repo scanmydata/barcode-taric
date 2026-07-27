@@ -169,37 +169,81 @@ _FETCHERS: tuple[Callable[[str], dict[str, Any]], ...] = (
 )
 
 
+def _as_text(value: Any) -> str:
+    """Coerce AI JSON τιμή σε string (το μοντέλο μπορεί να γυρίσει list -> έσκαγε το regex)."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value if v)
+    return str(value).strip() if value else ""
+
+
 def ai_infer_from_web(barcode: str) -> dict[str, Any] | None:
     """Χρησιμοποιεί πραγματικά Google/DDG results + AI για να συμπεράνει το προϊόν."""
     web = context_text(barcode, limit=6)
     data = ai.infer_product(barcode, web)
     if not data:
         return None
-    name = (data.get("product_name") or "").strip()
-    desc = (data.get("description") or "").strip()
+    name = _as_text(data.get("product_name"))
+    desc = _as_text(data.get("description"))
     if not name and not desc:
         return None
     return {"source": "AI/Web", "found": True, "product_name": name or desc,
-            "brand": data.get("brand"), "categories": data.get("categories"),
+            "brand": _as_text(data.get("brand")), "categories": _as_text(data.get("categories")),
             "description": desc, "confidence": data.get("confidence", "low")}
 
 
+def _web_context_for(result: dict[str, Any], barcode: str) -> str:
+    """Πραγματικά Google/SearXNG/DDG results για ΤΟ ΟΝΟΜΑ του προϊόντος (όχι μόνο το barcode).
+
+    Αναζήτηση με όνομα+μάρκα δίνει πολύ καλύτερα snippets από το σκέτο barcode number,
+    και τροφοδοτεί το AI enrichment ώστε η περιγραφή να είναι αναλυτική/σωστή.
+    """
+    name = _as_text(result.get("product_name")) or _as_text(result.get("description"))
+    brand = _as_text(result.get("brand"))
+    # μια ΕΙΔΙΚΗ κατηγορία ως disambiguation hint (π.χ. «Merenda» -> «Merenda hazelnut spread»),
+    # παρακάμπτοντας γενικόλογες («breakfasts», «spreads») που μπερδεύουν την αναζήτηση.
+    _GENERIC = {"breakfasts", "spreads", "sweet spreads", "foods", "food", "snacks", "groceries"}
+    cats = _as_text(result.get("categories")).replace(">", ",")
+    cat_hint = ""
+    for part in cats.split(","):
+        part = re.sub(r"^[a-z]{2}:", "", part.strip()).replace("-", " ").strip()
+        low = part.lower()
+        if part and low not in _GENERIC and low not in (name.lower(), brand.lower()):
+            cat_hint = part  # κράτα την πιο ειδική (τελευταία μη-γενική)
+    query = " ".join(p for p in (name, brand, cat_hint) if p).strip() or barcode
+    try:
+        return context_text(query, limit=6)
+    except Exception as exc:  # noqa: BLE001
+        debug(f"web context lookup raised: {exc}")
+        return ""
+
+
 def fetch_product(barcode: str, *, use_ai: bool = True) -> dict[str, Any]:
-    """Επιστρέφει το πρώτο επιτυχημένο αποτέλεσμα από όλες τις πηγές."""
-    if use_ai and ai.ai_available():
-        primary = None
-        try:
-            primary = ai_infer_from_web(barcode)
-        except Exception as exc:  # noqa: BLE001
-            debug(f"ai_infer_from_web raised: {exc}")
-        if primary and primary.get("found"):
-            return primary
+    """barcode -> στοιχεία προϊόντος. Δομημένες πηγές πρώτα, μετά Google enrichment.
+
+    1) Δοκίμασε τις δομημένες πηγές (OpenFoodFacts/UPC/scrapers) για όνομα/μάρκα/κατηγορία.
+    2) Με βάση το όνομα, τράβα πραγματικά web results (`web_context`) για επαλήθευση/εμπλουτισμό.
+    3) Αν καμία πηγή δεν βρήκε προϊόν, πέσε σε AI-inference από web (πάνω στο barcode).
+    """
+    best: dict[str, Any] = {"source": "none", "found": False}
     for fetcher in _FETCHERS:
         try:
             result = fetcher(barcode)
             if result.get("found"):
                 debug(f"Product found via {result.get('source')} for {barcode}")
-                return result
+                best = result
+                break
         except Exception as exc:  # noqa: BLE001
             debug(f"{fetcher.__name__} raised: {exc}")
-    return {"source": "none", "found": False}
+
+    if use_ai and ai.ai_available():
+        if best.get("found"):
+            best["web_context"] = _web_context_for(best, barcode)
+            return best
+        # καμία δομημένη πηγή -> AI συμπεραίνει από πραγματικά web results
+        try:
+            primary = ai_infer_from_web(barcode)
+            if primary and primary.get("found"):
+                return primary
+        except Exception as exc:  # noqa: BLE001
+            debug(f"ai_infer_from_web raised: {exc}")
+    return best

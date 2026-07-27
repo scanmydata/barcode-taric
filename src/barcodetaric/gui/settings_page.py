@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from ..config import SETTINGS
@@ -28,6 +29,7 @@ class SettingsPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # ποτέ οριζόντια κύλιση/κόψιμο
         outer.addWidget(scroll)
         container = QWidget()
         scroll.setWidget(container)
@@ -46,14 +48,24 @@ class SettingsPage(QWidget):
         self.openrouter_key.setPlaceholderText("sk-or-…")
         self.openrouter_model = QComboBox()
         self.openrouter_model.setEditable(True)
+        # Επίτρεψε στο combo να συρρικνώνεται· μεγάλα model ids (…:free) αλλιώς σπρώχνουν
+        # το form πέρα από το παράθυρο και κόβεται δεξιά.
+        self.openrouter_model.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.openrouter_model.setMinimumContentsLength(12)
+        self.openrouter_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.openrouter_model.addItem(str(SETTINGS.get("openrouter_model") or ""))
         model_row = QWidget()
         model_l = QHBoxLayout(model_row)
         model_l.setContentsMargins(0, 0, 0, 0)
         model_l.addWidget(self.openrouter_model, 1)
-        free_btn = QPushButton("Λήψη δωρεάν μοντέλων")
+        free_btn = QPushButton("Λίστα μοντέλων")
+        free_btn.setToolTip("Λήψη των δωρεάν μοντέλων OpenRouter")
         free_btn.clicked.connect(self._load_free_models)
         model_l.addWidget(free_btn)
+        smart_btn = QPushButton("Έξυπνη επιλογή")
+        smart_btn.setToolTip("Δοκιμάζει τα κορυφαία δωρεάν μοντέλα & επιλέγει ένα που δουλεύει")
+        smart_btn.clicked.connect(self._smart_pick_model)
+        model_l.addWidget(smart_btn)
         self.provider_order = QLineEdit(", ".join(SETTINGS.get("ai_provider_order") or []))
         ai_l.addRow("OpenRouter API key", self.openrouter_key)
         ai_l.addRow("Μοντέλο (:free)", model_row)
@@ -72,14 +84,52 @@ class SettingsPage(QWidget):
         web_l = QFormLayout(web_card)
         web_l.setContentsMargins(18, 16, 18, 16)
         web_l.setSpacing(10)
-        web_l.addRow(h2("Web search (Google results)"))
-        web_l.addRow("", muted("googlesearch-python → Google CSE → DuckDuckGo"))
+        web_l.addRow(h2("Web search"))
+        web_l.addRow("", muted("SearXNG → DuckDuckGo → headless Chrome (Google) → googlesearch → CSE"))
+        self.searxng_url = QLineEdit(str(SETTINGS.get("searxng_url") or ""))
+        self.searxng_url.setPlaceholderText("https://searx.example.org  ή  http://127.0.0.1:8888")
         self.cse_key = QLineEdit(str(SETTINGS.get("google_cse_api_key") or ""))
         self.cse_key.setEchoMode(QLineEdit.Password)
         self.cse_id = QLineEdit(str(SETTINGS.get("google_cse_id") or ""))
-        web_l.addRow("Google CSE API key (προαιρ.)", self.cse_key)
-        web_l.addRow("Google CSE id (προαιρ.)", self.cse_id)
+        self.web_order = QLineEdit(", ".join(SETTINGS.get("web_search_order") or []))
+        web_l.addRow("SearXNG URL", self.searxng_url)
+        web_l.addRow("", muted("SearXNG instance με ενεργό JSON API (self-host προτείνεται)."))
+        web_l.addRow("Google CSE key", self.cse_key)
+        web_l.addRow("Google CSE id", self.cse_id)
+        web_l.addRow("Σειρά web tiers", self.web_order)
+        self.headless_headed = QCheckBox("Ορατό παράθυρο Chrome")
+        self.headless_headed.setToolTip("Το headless Chrome είναι πιο εύκολα ανιχνεύσιμο ως bot· "
+                                        "με ορατό παράθυρο η Google μπλοκάρει λιγότερο.")
+        self.headless_headed.setChecked(bool(SETTINGS.get("headless_headed")))
+        web_l.addRow("", self.headless_headed)
+        web_l.addRow("", muted("Το «headless» tier θέλει selenium + Chrome. Η Google μπορεί να ζητήσει "
+                               "CAPTCHA (/sorry) σε συχνά queries — τότε πέφτει σε DuckDuckGo."))
         root.addWidget(web_card)
+
+        # --- Custom AI endpoint (μελλοντικό/on-prem) ---
+        custom_card = Card()
+        custom_l = QFormLayout(custom_card)
+        custom_l.setContentsMargins(18, 16, 18, 16)
+        custom_l.setSpacing(10)
+        custom_l.addRow(h2("Custom AI endpoint (προαιρετικό)"))
+        custom_l.addRow("", muted("OpenAI-συμβατό endpoint· βάλε «custom» στη σειρά providers."))
+        self.custom_url = QLineEdit(str(SETTINGS.get("custom_ai_base_url") or ""))
+        self.custom_url.setPlaceholderText("https://my-host/v1/chat/completions")
+        self.custom_model = QLineEdit(str(SETTINGS.get("custom_ai_model") or ""))
+        self.custom_model.setPlaceholderText("π.χ. gpt-4o-mini, llama-3.1-8b-instruct")
+        self.custom_key = QLineEdit(str(SETTINGS.get("custom_ai_api_key") or ""))
+        self.custom_key.setEchoMode(QLineEdit.Password)
+        self.custom_timeout = QDoubleSpinBox()
+        self.custom_timeout.setRange(10, 600)
+        self.custom_timeout.setSingleStep(10)
+        self.custom_timeout.setSuffix(" s")
+        self.custom_timeout.setValue(float(SETTINGS.get("custom_ai_timeout", 90)))
+        custom_l.addRow("Base URL", self.custom_url)
+        custom_l.addRow("", muted("Ollama μέσω Cloudflare tunnel: https://xxx.trycloudflare.com/v1"))
+        custom_l.addRow("Μοντέλο", self.custom_model)
+        custom_l.addRow("API key (προαιρ.)", self.custom_key)
+        custom_l.addRow("Timeout", self.custom_timeout)
+        root.addWidget(custom_card)
 
         # --- ΓΕΜΗ / TARIC / εμφάνιση ---
         misc_card = Card()
@@ -112,17 +162,21 @@ class SettingsPage(QWidget):
         dbg_l.setContentsMargins(18, 16, 18, 16)
         dbg_l.setSpacing(10)
         dbg_l.addWidget(h2("Debugger / Καταγραφή"))
-        dbg_btns = QHBoxLayout()
+        # 2×2 grid: 4 κουμπιά σε μία σειρά ξεπερνούσαν το πλάτος του παραθύρου (overflow).
+        dbg_btns = QGridLayout()
+        dbg_btns.setSpacing(8)
         test_btn = QPushButton("Έλεγχος AI providers")
         test_btn.clicked.connect(self._test_ai)
+        test_web_btn = QPushButton("Έλεγχος web search")
+        test_web_btn.clicked.connect(self._test_web)
         log_btn = QPushButton("Άνοιγμα αρχείου καταγραφής")
         log_btn.clicked.connect(self._open_log)
         refresh_log = QPushButton("Ανανέωση log")
         refresh_log.clicked.connect(self._refresh_log)
-        dbg_btns.addWidget(test_btn)
-        dbg_btns.addWidget(log_btn)
-        dbg_btns.addWidget(refresh_log)
-        dbg_btns.addStretch(1)
+        dbg_btns.addWidget(test_btn, 0, 0)
+        dbg_btns.addWidget(test_web_btn, 0, 1)
+        dbg_btns.addWidget(log_btn, 1, 0)
+        dbg_btns.addWidget(refresh_log, 1, 1)
         dbg_l.addLayout(dbg_btns)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -156,6 +210,21 @@ class SettingsPage(QWidget):
         if current in models:
             self.openrouter_model.setCurrentText(current)
 
+    def _smart_pick_model(self) -> None:
+        self.log_view.setPlainText("Έξυπνη επιλογή δωρεάν μοντέλου…")
+        run_async(self, ai.best_free_model, on_done=self._on_smart_picked,
+                  on_error=lambda m: self.log_view.setPlainText(m))
+
+    def _on_smart_picked(self, model) -> None:
+        if not model:
+            QMessageBox.information(self, "Έξυπνη επιλογή",
+                                    "Δεν βρέθηκε μοντέλο που να απαντά (έλεγξε το OpenRouter key).")
+            return
+        if self.openrouter_model.findText(model) < 0:
+            self.openrouter_model.insertItem(0, model)
+        self.openrouter_model.setCurrentText(model)
+        self.log_view.setPlainText(f"Επιλέχθηκε μοντέλο: {model}\n(πάτησε «Αποθήκευση ρυθμίσεων»)")
+
     def _test_ai(self) -> None:
         self.log_view.setPlainText("Έλεγχος providers…")
         run_async(self, ai.test_providers, on_done=self._on_tested,
@@ -164,6 +233,12 @@ class SettingsPage(QWidget):
     def _on_tested(self, results: list) -> None:
         lines = [("✓" if ok else "✗") + f"  {name}: {msg}" for name, ok, msg in results]
         self.log_view.setPlainText("\n".join(lines) or "—")
+
+    def _test_web(self) -> None:
+        from ..engine import web_search
+        self.log_view.setPlainText("Έλεγχος web search tiers…")
+        run_async(self, web_search.test_tiers, on_done=self._on_tested,
+                  on_error=lambda m: self.log_view.setPlainText(m))
 
     def _open_log(self) -> None:
         from ..logs import log_path
@@ -179,16 +254,22 @@ class SettingsPage(QWidget):
 
     def save(self) -> None:
         SETTINGS.set("openrouter_api_key", self.openrouter_key.text().strip())
-        model = self.openrouter_model.currentText().strip() or "meta-llama/llama-3.3-70b-instruct:free"
-        if not model.endswith(":free"):
-            model = f"{model}:free"
-        SETTINGS.set("openrouter_model", model)
+        SETTINGS.set("openrouter_model", ai._ensure_free(self.openrouter_model.currentText().strip()))
         order = [p.strip() for p in self.provider_order.text().split(",") if p.strip()]
-        SETTINGS.set("ai_provider_order", order or ["openrouter", "duckduckgo", "pollinations"])
+        SETTINGS.set("ai_provider_order", order or list(ai._DEFAULT_ORDER))
         SETTINGS.set("groq_enabled", self.groq_enabled.isChecked())
         SETTINGS.set("groq_api_key", self.groq_key.text().strip())
+        SETTINGS.set("searxng_url", self.searxng_url.text().strip())
         SETTINGS.set("google_cse_api_key", self.cse_key.text().strip())
         SETTINGS.set("google_cse_id", self.cse_id.text().strip())
+        web_order = [t.strip() for t in self.web_order.text().split(",") if t.strip()]
+        from ..engine import web_search
+        SETTINGS.set("web_search_order", web_order or list(web_search._DEFAULT_ORDER))
+        SETTINGS.set("headless_headed", self.headless_headed.isChecked())
+        SETTINGS.set("custom_ai_base_url", self.custom_url.text().strip())
+        SETTINGS.set("custom_ai_model", self.custom_model.text().strip())
+        SETTINGS.set("custom_ai_api_key", self.custom_key.text().strip())
+        SETTINGS.set("custom_ai_timeout", float(self.custom_timeout.value()))
         SETTINGS.set("business_portal_key", self.business_key.text().strip())
         SETTINGS.set("auto_update_taric", self.auto_update.isChecked())
         SETTINGS.set("ml_confidence_threshold", float(self.threshold.value()))

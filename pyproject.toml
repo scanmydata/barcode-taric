@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["pyside6>=6.6"]
 crypto = ["cryptography>=41.0"]
+# Headless Google search tier (πραγματικό Chrome). Προαιρετικό — το app δουλεύει και
+# χωρίς αυτό (πέφτει σε DuckDuckGo/SearXNG). Χρειάζεται εγκατεστημένο Chrome.
+headless = ["selenium>=4.20"]
 
 [project.scripts]
 barcodetaric = "barcodetaric.cli:main"

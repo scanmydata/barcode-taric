@@ -22,12 +22,25 @@ REG_PATH = r"Software\scanmydata\BarcodeTaric"
 # Προεπιλογές ρυθμίσεων. Το settings.json υπερισχύει, το env υπερισχύει όλων.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
-    "ai_provider_order": ["openrouter", "duckduckgo", "pollinations"],
-    "openrouter_model": "meta-llama/llama-3.3-70b-instruct:free",
+    "ai_provider_order": ["openrouter", "custom", "duckduckgo", "pollinations"],
+    # Το free-model landscape του OpenRouter αλλάζει· κράτα ένα ΕΝΕΡΓΟ default.
+    # (το παλιό llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
+    "openrouter_model": "openai/gpt-oss-20b:free",
     "openrouter_api_key": "",
+    # Custom OpenAI-συμβατό endpoint (μελλοντικό/προαιρετικό): base URL + model + key.
+    # Αν συμπληρωθεί το custom_ai_base_url, ο provider «custom» γίνεται διαθέσιμος.
+    "custom_ai_base_url": "",   # π.χ. https://my-host/v1  ή  …/v1/chat/completions
+    "custom_ai_model": "",      # π.χ. qwen2.5:7b (Ollama μέσω Cloudflare tunnel)
+    "custom_ai_api_key": "",
+    "custom_ai_timeout": 90,    # local LLM αργεί στο πρώτο token
     "google_cse_api_key": "",
     "google_cse_id": "",
-    "web_search_order": ["googlesearch", "google_cse", "duckduckgo"],
+    # SearXNG meta-search (self-host ή public instance με JSON API ενεργό).
+    "searxng_url": "",          # π.χ. https://searx.example.org  ή  http://127.0.0.1:8888
+    # headless = πραγματικό Chrome μέσω Selenium (παρακάμπτει το Google scraping-block).
+    "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
+    "headless_headed": False,   # true = ορατό παράθυρο Chrome (λιγότερο ανιχνεύσιμο ως bot)
+    "web_search_order": ["searxng", "duckduckgo", "headless", "googlesearch", "google_cse"],
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,
@@ -119,7 +132,8 @@ class Settings:
             json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         # Κράτα και τα κλειδιά AI στο process environment ώστε να τα δει η μηχανή.
-        for env_key in ("openrouter_api_key", "google_cse_api_key", "google_cse_id", "groq_api_key"):
+        for env_key in ("openrouter_api_key", "google_cse_api_key", "google_cse_id",
+                        "groq_api_key", "custom_ai_api_key"):
             val = self._data.get(env_key)
             if val:
                 os.environ[env_key.upper()] = str(val)

@@ -35,6 +35,11 @@ class MatchResult:
 _STOPWORDS = {
     "and", "or", "for", "with", "the", "a", "an", "of", "to", "in", "on", "other",
     "και", "με", "σε", "για", "του", "της", "των", "στο", "στη", "στον", "αλλα", "λοιπα",
+    # Μονάδες/ποσότητες & marketing-προσδιορισμοί: ΔΕΝ είναι κριτήρια δασμολογικής κλάσης
+    # και «τραβάνε» σε άσχετες γραμμές (π.χ. «ελαφρύ»->ελαφρό σκυρόδεμα, «φρέσκο»->νωπή ξυλεία).
+    "lt", "ltr", "l", "ml", "cl", "kg", "gr", "gram", "grammar", "γρ", "kgr", "τεμ", "τεμαχια",
+    "pack", "συσκευασια", "τεμαχιο", "φρεσκο", "φρεσκα", "fresh", "ελαφρυ", "ελαφρια", "light",
+    "premium", "νεο", "new", "classic", "original",
 }
 
 
@@ -77,10 +82,17 @@ def _idf() -> dict[str, float]:
     return _IDF
 
 
+# Πλαφόν IDF: χωρίς αυτό, σπάνιοι ΠΡΟΣΔΙΟΡΙΣΜΟΙ (π.χ. «αγελάδος», «παστεριωμένο», «ελαφρύ»)
+# παίρνουν τεράστιο βάρος και «πνίγουν» το βασικό ουσιαστικό (γάλα) — που είναι κοινό άρα χαμηλό
+# IDF. Για ταξινόμηση προϊόντων ο τύπος του προϊόντος μετράει, όχι οι επιθετικοί προσδιορισμοί.
+_IDF_CAP = 5.0
+
+
 def _w(token: str) -> float:
-    """Βάρος token: IDF αν υπάρχει dataset, αλλιώς 1.0 (ουδέτερο)."""
+    """Βάρος token: IDF (με πλαφόν) αν υπάρχει dataset, αλλιώς 1.0 (ουδέτερο)."""
     idf = _idf()
-    return idf.get(token, math.log(1 + _IDF_N) if _IDF_N else 1.0)
+    raw = idf.get(token, math.log(1 + _IDF_N) if _IDF_N else 1.0)
+    return min(raw, _IDF_CAP)
 
 
 def _token_matches(q: str, row_tokens: set[str]) -> bool:
@@ -88,7 +100,9 @@ def _token_matches(q: str, row_tokens: set[str]) -> bool:
         return True
     if len(q) >= 4:
         for r in row_tokens:
-            if len(r) >= 4 and (q.startswith(r) or r.startswith(q)):
+            # Prefix match ΜΟΝΟ όταν τα μήκη είναι κοντά (diff <= 2). Αλλιώς σκέτο brand
+            # όπως «δελτα»(5) ταίριαζε λάθος «δελταμεθρινη»(12) -> γάλα κατατασσόταν ως pesticide.
+            if len(r) >= 4 and abs(len(r) - len(q)) <= 2 and (q.startswith(r) or r.startswith(q)):
                 return True
     return False
 
@@ -107,7 +121,7 @@ def _score(query_tokens: set[str], row) -> float:
     matched = [q for q in query_tokens if _token_matches(q, row_tokens)]
     if not matched:
         return 0.0
-    # IDF-σταθμισμένη κάλυψη του query (σπάνιες λέξεις μετράνε πολύ περισσότερο).
+    # IDF-σταθμισμένη (με πλαφόν) κάλυψη του query.
     matched_w = sum(_w(q) for q in matched)
     query_w = sum(_w(q) for q in query_tokens) or 1.0
     coverage = matched_w / query_w
@@ -116,14 +130,32 @@ def _score(query_tokens: set[str], row) -> float:
     return coverage + 0.1 * brevity
 
 
-def fts_candidates(description_el: str, description_en: str, *, top: int = 5) -> list:
+def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
+                   top: int = 5) -> list:
     query = f"{description_el} {description_en}".strip()
     if not query:
         return []
-    rows = repo.search_taric(query, limit=60)
-    qtokens = _tokens(query)
+    # Αφαίρεσε τα brand tokens από το scoring (η μάρκα δεν είναι κριτήριο δασμολογικής κλάσης).
+    brand_tokens = _tokens(brand) if brand else set()
+    qtokens = _tokens(query) - brand_tokens
+    if not qtokens:  # αν έμεινε μόνο η μάρκα, ξαναβάλε τα πάντα
+        qtokens = _tokens(query)
+
+    # UNION retrieval: εκτός από το σύνθετο query, ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά.
+    # Το bm25 «θάβει» γενικές επικεφαλίδες (π.χ. 0401 «Γάλα») στο σύνθετο OR-query· η ανά-όρο
+    # αναζήτηση εγγυάται ότι οι γραμμές του βασικού ουσιαστικού (milk/γάλα) μπαίνουν στο pool.
+    seen: dict[str, object] = {}
+    for r in repo.search_taric(query, limit=120):
+        seen[r.code] = r
+    # Ψάξε ΚΑΘΕ σημαντικό token ξεχωριστά — ΚΑΙ το βασικό ουσιαστικό (milk/γάλα), όχι μόνο
+    # τους σπάνιους προσδιορισμούς. Αλλιώς η γενική επικεφαλίδα (0401 Γάλα) δεν μπαίνει καν στο
+    # pool, γιατί το «γάλα» είναι κοινό (χαμηλό IDF) και δεν προλαβαίνει το σύνθετο bm25 query.
+    for tok in list(qtokens)[:12]:
+        for r in repo.search_taric(tok, limit=40):
+            seen.setdefault(r.code, r)
+
     scored = sorted(
-        ((_score(qtokens, r), r) for r in rows), key=lambda x: x[0], reverse=True
+        ((_score(qtokens, r), r) for r in seen.values()), key=lambda x: x[0], reverse=True
     )
     return [(s, r) for s, r in scored if s > 0][:top]
 
@@ -153,8 +185,10 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                confidence=pred.confidence, taric_source="ml",
                                ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
 
-    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία
-    cands = fts_candidates(description_el, description_en, top=6)
+    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (χωρίς τη μάρκα ως κριτήριο).
+    # top=8: δίνουμε περισσότερους υποψηφίους στο AI rank ώστε να υπάρχει ο σωστός ακόμη κι όταν
+    # το keyword scoring τον βάζει 3ο-8ο (π.χ. γάλα/καφές κάτω από παρόμοιες γραμμές).
+    cands = fts_candidates(description_el, description_en, brand=brand, top=8)
     cand_dicts = [{"code": r.code,
                    "description_el": r.description_path_el or r.description_el,
                    "description_en": r.description_path_en or r.description_en,

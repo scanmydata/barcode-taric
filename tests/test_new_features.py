@@ -63,3 +63,109 @@ def test_fold_and_stem_greek():
     from barcodetaric.engine.http_util import stem_token
     assert stem_token("νερο") == stem_token("νερα")  # ίδια ρίζα ενικός/πληθυντικός
     assert stem_token("waters") == "water"
+
+
+def test_ensure_free_router_alias():
+    from barcodetaric.engine.ai import _ensure_free, DEFAULT_FREE_MODEL
+    # ο generic router alias δεν παίρνει :free suffix
+    assert _ensure_free("openrouter/free") == "openrouter/free"
+    assert _ensure_free("") == DEFAULT_FREE_MODEL
+    assert _ensure_free("x/y").endswith(":free")
+
+
+def test_custom_provider_skipped_when_unset():
+    from barcodetaric.engine import ai
+    from barcodetaric.config import SETTINGS
+    import os
+    SETTINGS.set("custom_ai_base_url", "")
+    os.environ.pop("CUSTOM_AI_BASE_URL", None)
+    assert ai._custom("hello", 5) is None
+    assert "custom" in ai._PROVIDERS
+
+
+def test_searxng_tier_skipped_when_unset():
+    from barcodetaric.engine import web_search
+    from barcodetaric.config import SETTINGS
+    SETTINGS.set("searxng_url", "")
+    assert web_search._via_searxng("coffee", 3) == []
+    assert "searxng" in web_search._TIERS
+    # ο debugger επιστρέφει μία εγγραφή ανά tier της σειράς
+    names = [n for n, _ok, _msg in web_search.test_tiers("x")]
+    assert "searxng" in names
+
+
+def test_rank_free_prefers_known_families():
+    from barcodetaric.engine.ai import _rank_free
+    ranked = _rank_free(["zzz/unknown-model:free", "openai/gpt-oss-20b:free",
+                         "google/gemma-4-31b-it:free"])
+    assert ranked[0].startswith("openai/gpt-oss")
+    assert ranked[-1].startswith("zzz/")
+
+
+def test_headless_tier_registered():
+    from barcodetaric.engine import web_search
+    assert "headless" in web_search._TIERS
+    assert "headless" in web_search._DEFAULT_ORDER
+
+
+def test_fetch_product_attaches_web_context(monkeypatch):
+    from barcodetaric.engine import barcode_sources as bs
+    # μία δομημένη πηγή βρίσκει προϊόν, οι υπόλοιπες όχι
+    monkeypatch.setattr(bs, "_FETCHERS", (
+        lambda code: {"source": "Test", "found": True, "product_name": "Merenda", "brand": "Pavlidis"},
+    ))
+    monkeypatch.setattr(bs.ai, "ai_available", lambda: True)
+    monkeypatch.setattr(bs, "context_text", lambda q, limit=6: f"WEB[{q}]")
+    out = bs.fetch_product("7622201126131", use_ai=True)
+    assert out["found"] and out["product_name"] == "Merenda"
+    # web context από αναζήτηση ΜΕ ΤΟ ΟΝΟΜΑ (όχι το barcode)
+    assert out["web_context"] == "WEB[Merenda Pavlidis]"
+
+
+def test_web_context_query_uses_name_brand_category(monkeypatch):
+    from barcodetaric.engine import barcode_sources as bs
+    seen = {}
+    monkeypatch.setattr(bs, "context_text", lambda q, limit=6: seen.setdefault("q", q) or "ctx")
+    result = {"product_name": "Merenda", "brand": "Pavlidis",
+              "categories": "en:hazelnut-spreads, en:breakfasts"}
+    bs._web_context_for(result, "7622201126131")
+    # disambiguation: όνομα + μάρκα + κατηγορία (όχι σκέτο barcode)
+    assert "Merenda" in seen["q"] and "Pavlidis" in seen["q"]
+    assert "hazelnut" in seen["q"].lower()
+
+
+def test_resolve_preserves_clean_english_despite_bad_translation(monkeypatch):
+    """Το description_en πρέπει να κρατά την καθαρή αγγλική κατηγορία (OFF) ακόμη κι όταν
+    το AI enrichment γυρίζει λάθος ελληνική μετάφραση (spread->σπρέι, hazelnut->αμύγδαλα)."""
+    from barcodetaric.engine import resolve, barcode_sources, translate, ai
+    monkeypatch.setattr(barcode_sources, "fetch_product", lambda bc, use_ai=True: {
+        "source": "OpenFoodFacts", "found": True, "product_name": "Merenda", "brand": "Merenda",
+        "categories": "en:Cocoa and hazelnuts spreads", "description": "", "quantity": "360g"})
+    monkeypatch.setattr(ai, "ai_available", lambda: True)
+    monkeypatch.setattr(ai, "enrich_description", lambda *a, **k: "Σπρέι με αμύγδαλα")  # garbage
+    monkeypatch.setattr(translate, "ensure_bilingual", lambda t: (t, t))
+    r = resolve.resolve_barcode("7622201126131", use_ai=True, do_match=False)
+    assert "cocoa and hazelnuts spreads" in r.description_en.lower()
+    assert r.quantity == "360g"
+
+
+def test_custom_endpoint_builds_url(monkeypatch):
+    from barcodetaric.engine import ai
+    from barcodetaric.config import SETTINGS
+    captured = {}
+    SETTINGS.set("custom_ai_base_url", "https://x.trycloudflare.com/v1")
+    SETTINGS.set("custom_ai_model", "qwen2.5:7b")
+    SETTINGS.set("custom_ai_api_key", "")
+    SETTINGS.set("custom_ai_timeout", 90)
+
+    def fake_http_json(url, **kw):
+        captured["url"] = url
+        captured["timeout"] = kw.get("timeout")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(ai, "http_json", fake_http_json)
+    r = ai._custom("hi", 20)
+    assert r == "ok"
+    assert captured["url"] == "https://x.trycloudflare.com/v1/chat/completions"
+    assert captured["timeout"] >= 90   # local LLM generous timeout (max(call_timeout, setting))
+    SETTINGS.set("custom_ai_base_url", "")

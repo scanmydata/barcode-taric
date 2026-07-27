@@ -27,11 +27,17 @@ class ResolveResult:
     candidates: list = field(default_factory=list)
 
 
-def _clean_categories(categories: str) -> str:
-    """Καθαρίζει τα OpenFoodFacts categories: αφαιρεί language prefixes & tags."""
+def _clean_categories(categories) -> str:
+    """Καθαρίζει τα OpenFoodFacts categories: αφαιρεί language prefixes & tags.
+
+    Δέχεται str Ή list (το AI infer_product μπορεί να επιστρέψει JSON array -> ο
+    παλιός κώδικας έσκαγε με «expected string, got list»).
+    """
     if not categories:
         return ""
-    parts = re.split(r"[,>]", categories)
+    if isinstance(categories, (list, tuple)):
+        categories = ", ".join(str(c) for c in categories)
+    parts = re.split(r"[,>]", str(categories))
     cleaned = []
     for part in parts:
         part = re.sub(r"^[a-z]{2}:", "", part.strip())      # 'en:' , 'fr:'
@@ -62,21 +68,35 @@ def resolve_barcode(barcode: str, *, use_ai: bool = True, do_match: bool = True)
     categories = _clean_categories(info.get("categories") or "")
     quantity = str(info.get("quantity") or "").strip()
     raw_desc = info.get("description") or ""
+    web_context = info.get("web_context") or ""
 
     # Βασικό κείμενο: όνομα + περιγραφή + ΚΑΤΗΓΟΡΙΕΣ (ο τύπος προϊόντος οδηγεί το matching).
     base = " · ".join(p for p in (name, raw_desc, categories) if p).strip(" ·") or name
 
     # AI enrichment -> αναλυτική περιγραφή με υλικό/χρήση/μέγεθος (π.χ. Merenda -> κακάο επάλειψη 360g).
+    # ΣΗΜΑΝΤΙΚΟ: τα web snippets τροφοδοτούν το enrichment ΜΟΝΟ όταν τα δομημένα δεδομένα είναι
+    # φτωχά (χωρίς κατηγορίες). Αν η πηγή (OpenFoodFacts) έδωσε κατηγορίες, τις εμπιστευόμαστε —
+    # θορυβώδη web αποτελέσματα (π.χ. λάθος/παρόμοιο προϊόν) αλλιώς χαλάνε την περιγραφή -> λάθος TARIC.
     enriched = None
     if use_ai and ai.ai_available() and (name or categories):
+        enrich_web = web_context if not categories else ""
         enriched = ai.enrich_description(name or base, brand=brand,
-                                         categories=categories, quantity=quantity)
+                                         categories=categories, quantity=quantity,
+                                         web_context=enrich_web)
 
     display = enriched or base
     if quantity and quantity.lower() not in display.lower():
         display = f"{display} {quantity}".strip()
 
     el, en = translate.ensure_bilingual(display) if display else ("", "")
+
+    # ΚΡΙΣΙΜΟ: το matching βασίζεται κυρίως στο EN side. Τα μικρά free μοντέλα μεταφράζουν λάθος
+    # (π.χ. «spread»->«spray», «hazelnut»->«almond») και μολύνουν την περιγραφή -> λάθος TARIC.
+    # Βάλε ΜΠΡΟΣΤΑ το καθαρό αγγλικό (όνομα + κατηγορίες OFF) ώστε ο matcher να «κλειδώνει» πάνω
+    # σε αξιόπιστο σήμα, ανεξάρτητα από την ποιότητα της AI μετάφρασης/εμπλουτισμού.
+    clean_en = " ".join(p for p in (name, categories) if p).strip()
+    if clean_en and clean_en.lower() not in (en or "").lower():
+        en = f"{clean_en} {en}".strip() if en else clean_en
 
     result = ResolveResult(
         barcode=normalized, description_el=el, description_en=en, brand=brand,

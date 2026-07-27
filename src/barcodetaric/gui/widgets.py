@@ -74,12 +74,16 @@ def h1(text: str) -> QLabel:
 def h2(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setObjectName("h2")
+    lbl.setWordWrap(True)      # αποφυγή οριζόντιου overflow σε μεγάλους τίτλους
     return lbl
 
 
 def muted(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setObjectName("muted")
+    # Χωρίς wrap, οι μεγάλες βοηθητικές γραμμές «σπρώχνουν» το card πέρα από το παράθυρο
+    # και κόβονται δεξιά. Το wrap κρατά το πλάτος μέσα στα όρια της σελίδας.
+    lbl.setWordWrap(True)
     return lbl
 
 
