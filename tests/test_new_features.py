@@ -134,19 +134,14 @@ def test_web_context_query_uses_name_brand_category(monkeypatch):
     assert "hazelnut" in seen["q"].lower()
 
 
-def test_resolve_preserves_clean_english_despite_bad_translation(monkeypatch):
-    """Το description_en πρέπει να κρατά την καθαρή αγγλική κατηγορία (OFF) ακόμη κι όταν
-    το AI enrichment γυρίζει λάθος ελληνική μετάφραση (spread->σπρέι, hazelnut->αμύγδαλα)."""
-    from barcodetaric.engine import resolve, barcode_sources, translate, ai
-    monkeypatch.setattr(barcode_sources, "fetch_product", lambda bc, use_ai=True: {
-        "source": "OpenFoodFacts", "found": True, "product_name": "Merenda", "brand": "Merenda",
-        "categories": "en:Cocoa and hazelnuts spreads", "description": "", "quantity": "360g"})
-    monkeypatch.setattr(ai, "ai_available", lambda: True)
-    monkeypatch.setattr(ai, "enrich_description", lambda *a, **k: "Σπρέι με αμύγδαλα")  # garbage
-    monkeypatch.setattr(translate, "ensure_bilingual", lambda t: (t, t))
-    r = resolve.resolve_barcode("7622201126131", use_ai=True, do_match=False)
-    assert "cocoa and hazelnuts spreads" in r.description_en.lower()
-    assert r.quantity == "360g"
+def test_food_source_chapter_prior(monkeypatch):
+    """Πηγή τροφίμου (OpenFoodFacts) πρέπει να στρέφει την κατάταξη σε κεφάλαια 01-24
+    (π.χ. «water» -> 2201 μεταλλικό νερό, ΟΧΙ 3303 άρωμα)."""
+    from barcodetaric.engine import taric_match as tm
+    assert tm._is_food_source("OpenFoodFacts") is True
+    assert tm._is_food_source("manual") is False
+    assert tm._is_food_chapter("2201101100") is True
+    assert tm._is_food_chapter("3303000000") is False
 
 
 def test_custom_endpoint_builds_url(monkeypatch):

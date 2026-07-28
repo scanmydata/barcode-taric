@@ -22,18 +22,10 @@ REG_PATH = r"Software\scanmydata\BarcodeTaric"
 # Προεπιλογές ρυθμίσεων. Το settings.json υπερισχύει, το env υπερισχύει όλων.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
-<<<<<<< HEAD
     "ai_provider_order": ["openrouter", "custom", "duckduckgo", "pollinations"],
     # Το free-model landscape του OpenRouter αλλάζει· κράτα ένα ΕΝΕΡΓΟ default.
     # (το παλιό llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
     "openrouter_model": "openai/gpt-oss-20b:free",
-=======
-    # OpenRouter πρώτο (δωρεάν :free μοντέλα με key). Το Groq μένει ως επιλογή αλλά
-    # θέλει login/κλειδί που δεν είναι πάντα διαθέσιμο. Τα no-key (pollinations/
-    # duckduckgo) χρεώνουν/περιορίζονται πλέον (402/429) — έσχατο fallback.
-    "ai_provider_order": ["openrouter", "groq", "duckduckgo", "pollinations"],
-    "openrouter_model": "meta-llama/llama-3.3-70b-instruct:free",
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     "openrouter_api_key": "",
     # Custom OpenAI-συμβατό endpoint (μελλοντικό/προαιρετικό): base URL + model + key.
     # Αν συμπληρωθεί το custom_ai_base_url, ο provider «custom» γίνεται διαθέσιμος.
@@ -43,21 +35,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "custom_ai_timeout": 90,    # local LLM αργεί στο πρώτο token
     "google_cse_api_key": "",
     "google_cse_id": "",
-<<<<<<< HEAD
     # SearXNG meta-search (self-host ή public instance με JSON API ενεργό).
     "searxng_url": "",          # π.χ. https://searx.example.org  ή  http://127.0.0.1:8888
+    # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα χωρίς API key
+    # — github.com/karust/openserp. Αν τρέχει, μπορείς να τον βάλεις στη σειρά ως «openserp».
+    "openserp_url": "http://127.0.0.1:7000",
+    "openserp_engine": "google",
+    "openserp_timeout": 45,     # ο headless browser του OpenSERP αργεί στο πρώτο query
     # headless = πραγματικό Chrome μέσω Selenium (παρακάμπτει το Google scraping-block).
     "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
     "headless_headed": False,   # true = ορατό παράθυρο Chrome (λιγότερο ανιχνεύσιμο ως bot)
+    # Χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome του υπολογιστή (cookies/consent/login) ώστε η Google
+    # να μη σε περνά για bot. Άφησε κενό για καθαρό προφίλ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
+    "chrome_user_data_dir": "",
+    "chrome_profile": "",       # π.χ. "Default" ή "Profile 1" (μαζί με το user_data_dir)
     "web_search_order": ["searxng", "duckduckgo", "headless", "googlesearch", "google_cse"],
-=======
-    # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα
-    # χωρίς API key — github.com/karust/openserp. Αν τρέχει, προτιμάται πρώτο.
-    "openserp_url": "http://127.0.0.1:7000",
-    "openserp_engine": "google",
-    "openserp_timeout": 45,      # ο headless browser είναι αργός στο πρώτο query
-    "web_search_order": ["openserp", "googlesearch", "google_cse", "duckduckgo"],
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,

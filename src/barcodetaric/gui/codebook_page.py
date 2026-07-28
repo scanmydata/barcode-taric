@@ -19,8 +19,10 @@ from ..engine import resolve
 from ..engine.barcode_sources import looks_like_barcode
 from ..excel import exporter, reader
 from ..models import CatalogItem, ClientItem
-from .widgets import configure_table, h1, muted
+from .widgets import NumericItem, configure_table, h1, muted
 from .workers import run_async
+
+_ID_ROLE = Qt.UserRole + 1
 
 
 class CodebookPage(QWidget):
@@ -104,29 +106,47 @@ class CodebookPage(QWidget):
             return
         items = repo.list_client_items(self._client_id)
         self._ids = [it.id for it in items]
+        self.table.setSortingEnabled(False)   # μη αναδιατάσσεις κατά το γέμισμα
         self.table.setRowCount(len(items))
         for row, it in enumerate(items):
             self._set_row(row, it)
+        self.table.setSortingEnabled(True)
         stats = repo.client_stats(self._client_id)
         self.stats_lbl.setText(
             f"Σύνολο: {stats['total']} · Με TARIC: {stats['matched']} · "
             f"Εκκρεμή: {stats['unmatched']} · Επιβεβαιωμένα: {stats['verified']}")
 
     def _set_row(self, row: int, it: ClientItem) -> None:
-        self.table.setItem(row, 0, QTableWidgetItem(it.barcode))
+        code_item = QTableWidgetItem(it.barcode)
+        code_item.setData(_ID_ROLE, it.id)    # id στη γραμμή -> ανθεκτικό σε sorting
+        self.table.setItem(row, 0, code_item)
         self.table.setItem(row, 1, QTableWidgetItem(it.description_el or it.description_en))
         self.table.setItem(row, 2, QTableWidgetItem(it.description_en or it.description_el))
         self.table.setItem(row, 3, QTableWidgetItem(it.taric_code))
         self.table.setItem(row, 4, QTableWidgetItem(it.hs4))
         self.table.setItem(row, 5, QTableWidgetItem(it.taric_source))
-        self.table.setItem(row, 6, QTableWidgetItem(f"{it.confidence:.2f}" if it.confidence else ""))
+        self.table.setItem(row, 6, NumericItem(f"{it.confidence:.2f}" if it.confidence else "0"))
         self.table.setItem(row, 7, QTableWidgetItem("✔" if it.verified else ""))
 
     def _selected_item(self) -> ClientItem | None:
         rows = self.table.selectionModel().selectedRows()
         if not rows:
             return None
-        return repo.get_client_item(self._ids[rows[0].row()])
+        item = self.table.item(rows[0].row(), 0)
+        if item is None:
+            return None
+        return repo.get_client_item(item.data(_ID_ROLE))
+
+    def selected_items(self) -> list[ClientItem]:
+        """Όλα τα επιλεγμένα είδη (multi-select) — για μαζικές ενέργειες."""
+        out = []
+        for idx in self.table.selectionModel().selectedRows():
+            item = self.table.item(idx.row(), 0)
+            if item is not None:
+                ci = repo.get_client_item(item.data(_ID_ROLE))
+                if ci:
+                    out.append(ci)
+        return out
 
     # ---------------------------------------------------------- add flows ----
     def add_from_input(self) -> None:

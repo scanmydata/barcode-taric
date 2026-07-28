@@ -80,6 +80,14 @@ def _headless_driver():
         binary = (SETTINGS.get("chrome_binary") or "").strip()
         if binary:
             opts.binary_location = binary
+        # Χρήση του πραγματικού προφίλ Chrome (cookies/consent/login) -> λιγότερο anti-bot.
+        # ΠΡΟΣΟΧΗ: το Chrome πρέπει να είναι ΚΛΕΙΣΤΟ αλλιώς το user-data-dir είναι κλειδωμένο.
+        user_dir = (SETTINGS.get("chrome_user_data_dir") or "").strip()
+        if user_dir:
+            opts.add_argument(f"--user-data-dir={user_dir}")
+            profile = (SETTINGS.get("chrome_profile") or "").strip()
+            if profile:
+                opts.add_argument(f"--profile-directory={profile}")
         driver = webdriver.Chrome(options=opts)  # Selenium Manager βρίσκει το chromedriver
         driver.set_page_load_timeout(25)
         # κρύψε το navigator.webdriver flag (βασικό tell για bot detection)
@@ -264,11 +272,8 @@ def _via_duckduckgo(query: str, limit: int) -> list[dict[str, str]]:
 
 
 _TIERS = {
-<<<<<<< HEAD
     "searxng": _via_searxng,
-=======
     "openserp": _via_openserp,
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     "googlesearch": _via_googlesearch,
     "google_cse": _via_google_cse,
     "headless": _via_headless,
@@ -283,11 +288,7 @@ _DEFAULT_ORDER = ["searxng", "duckduckgo", "headless", "googlesearch", "google_c
 
 def search_web(query: str, *, limit: int = 6) -> list[dict[str, str]]:
     """Δοκιμάζει τα tiers με τη σειρά ρυθμίσεων· επιστρέφει τα πρώτα αποτελέσματα."""
-<<<<<<< HEAD
     order = SETTINGS.get("web_search_order") or _DEFAULT_ORDER
-=======
-    order = SETTINGS.get("web_search_order") or ["openserp", "googlesearch", "google_cse", "duckduckgo"]
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     for name in order:
         fn = _TIERS.get(name)
         if fn is None:

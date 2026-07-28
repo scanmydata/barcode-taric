@@ -3,6 +3,13 @@
 Αυτό το αρχείο φορτώνεται αυτόματα από το Claude Code. Περιγράφει **τι είναι** το
 project, **πώς λειτουργεί** και **τι πρέπει να προσέχεις** πριν αλλάξεις κώδικα.
 
+> **Πρόσφατα (round 3):** διορθώθηκε committed merge-conflict (HEAD searxng/custom/headless +
+> f91a0af OpenSERP/chapter-prior/junk-filter ενοποιήθηκαν). Νέα: chapter-prior (food source ->
+> κεφ. 01-24), brand-stripping + IDF cap + union retrieval στο matching, custom AI endpoint
+> (Ollama/Cloudflare), smart free-model pick + auto-fallback σε 404, πίνακες
+> sortable/reorderable/multi-select (id σε `Qt.UserRole`, ΟΧΙ positional), headless Chrome με
+> προφίλ χρήστη. Το `conftest.py` **εξουδετερώνει network** (αλλιώς το suite κρέμαγε σε real AI/Chrome).
+
 ## Τι είναι
 
 `BarcodeTaric` — τοπικό **desktop app (PySide6/Qt6)** για ελληνικά τελωνειακά/λογιστικά:

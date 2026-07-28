@@ -78,39 +78,7 @@ def resolve_barcode(barcode: str, *, use_ai: bool = True, do_match: bool = True)
     categories = _clean_categories(info.get("categories") or "")
     quantity = str(info.get("quantity") or "").strip()
     raw_desc = info.get("description") or ""
-    web_context = info.get("web_context") or ""
 
-<<<<<<< HEAD
-    # Βασικό κείμενο: όνομα + περιγραφή + ΚΑΤΗΓΟΡΙΕΣ (ο τύπος προϊόντος οδηγεί το matching).
-    base = " · ".join(p for p in (name, raw_desc, categories) if p).strip(" ·") or name
-
-    # AI enrichment -> αναλυτική περιγραφή με υλικό/χρήση/μέγεθος (π.χ. Merenda -> κακάο επάλειψη 360g).
-    # ΣΗΜΑΝΤΙΚΟ: τα web snippets τροφοδοτούν το enrichment ΜΟΝΟ όταν τα δομημένα δεδομένα είναι
-    # φτωχά (χωρίς κατηγορίες). Αν η πηγή (OpenFoodFacts) έδωσε κατηγορίες, τις εμπιστευόμαστε —
-    # θορυβώδη web αποτελέσματα (π.χ. λάθος/παρόμοιο προϊόν) αλλιώς χαλάνε την περιγραφή -> λάθος TARIC.
-    enriched = None
-    if use_ai and ai.ai_available() and (name or categories):
-        enrich_web = web_context if not categories else ""
-        enriched = ai.enrich_description(name or base, brand=brand,
-                                         categories=categories, quantity=quantity,
-                                         web_context=enrich_web)
-
-    display = enriched or base
-    if quantity and quantity.lower() not in display.lower():
-        display = f"{display} {quantity}".strip()
-
-    el, en = translate.ensure_bilingual(display) if display else ("", "")
-
-    # ΚΡΙΣΙΜΟ: το matching βασίζεται κυρίως στο EN side. Τα μικρά free μοντέλα μεταφράζουν λάθος
-    # (π.χ. «spread»->«spray», «hazelnut»->«almond») και μολύνουν την περιγραφή -> λάθος TARIC.
-    # Βάλε ΜΠΡΟΣΤΑ το καθαρό αγγλικό (όνομα + κατηγορίες OFF) ώστε ο matcher να «κλειδώνει» πάνω
-    # σε αξιόπιστο σήμα, ανεξάρτητα από την ποιότητα της AI μετάφρασης/εμπλουτισμού.
-    clean_en = " ".join(p for p in (name, categories) if p).strip()
-    if clean_en and clean_en.lower() not in (en or "").lower():
-        en = f"{clean_en} {en}".strip() if en else clean_en
-
-=======
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     result = ResolveResult(
         barcode=normalized, brand=brand, quantity=quantity, categories=categories,
         source=info.get("source", ""), found=bool(info.get("found")),

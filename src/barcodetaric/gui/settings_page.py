@@ -83,20 +83,10 @@ class SettingsPage(QWidget):
         web_l = QFormLayout(web_card)
         web_l.setContentsMargins(18, 16, 18, 16)
         web_l.setSpacing(10)
-<<<<<<< HEAD
         web_l.addRow(h2("Web search"))
         web_l.addRow("", muted("SearXNG → DuckDuckGo → headless Chrome (Google) → googlesearch → CSE"))
         self.searxng_url = QLineEdit(str(SETTINGS.get("searxng_url") or ""))
         self.searxng_url.setPlaceholderText("https://searx.example.org  ή  http://127.0.0.1:8888")
-=======
-        web_l.addRow(h2("Web search (Google results)"))
-        web_l.addRow("", muted("OpenSERP → googlesearch → Google CSE → DuckDuckGo"))
-        self.openserp_url = QLineEdit(str(SETTINGS.get("openserp_url") or ""))
-        self.openserp_url.setPlaceholderText("http://127.0.0.1:7000 (τοπικός OpenSERP server)")
-        web_l.addRow("OpenSERP URL", self.openserp_url)
-        web_l.addRow("", muted("Πραγματικά Google αποτελέσματα χωρίς key. Εκκίνηση:  "
-                               "docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000"))
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
         self.cse_key = QLineEdit(str(SETTINGS.get("google_cse_api_key") or ""))
         self.cse_key.setEchoMode(QLineEdit.Password)
         self.cse_id = QLineEdit(str(SETTINGS.get("google_cse_id") or ""))
@@ -111,6 +101,14 @@ class SettingsPage(QWidget):
                                         "με ορατό παράθυρο η Google μπλοκάρει λιγότερο.")
         self.headless_headed.setChecked(bool(SETTINGS.get("headless_headed")))
         web_l.addRow("", self.headless_headed)
+        self.chrome_user_dir = QLineEdit(str(SETTINGS.get("chrome_user_data_dir") or ""))
+        self.chrome_user_dir.setPlaceholderText(r"%LOCALAPPDATA%\Google\Chrome\User Data (προαιρ.)")
+        self.chrome_profile = QLineEdit(str(SETTINGS.get("chrome_profile") or ""))
+        self.chrome_profile.setPlaceholderText("Default ή Profile 1 (προαιρ.)")
+        web_l.addRow("Chrome προφίλ (φάκελος)", self.chrome_user_dir)
+        web_l.addRow("Chrome profile", self.chrome_profile)
+        web_l.addRow("", muted("Χρήση του πραγματικού προφίλ Chrome (cookies/consent) μειώνει το "
+                               "anti-bot. ΠΡΟΣΟΧΗ: κλείσε το Chrome πριν την αναζήτηση."))
         web_l.addRow("", muted("Το «headless» tier θέλει selenium + Chrome. Η Google μπορεί να ζητήσει "
                                "CAPTCHA (/sorry) σε συχνά queries — τότε πέφτει σε DuckDuckGo."))
         root.addWidget(web_card)
@@ -265,22 +263,17 @@ class SettingsPage(QWidget):
         SETTINGS.set("openrouter_api_key", self.openrouter_key.text().strip())
         SETTINGS.set("openrouter_model", ai._ensure_free(self.openrouter_model.currentText().strip()))
         order = [p.strip() for p in self.provider_order.text().split(",") if p.strip()]
-<<<<<<< HEAD
         SETTINGS.set("ai_provider_order", order or list(ai._DEFAULT_ORDER))
-        SETTINGS.set("groq_enabled", self.groq_enabled.isChecked())
         SETTINGS.set("groq_api_key", self.groq_key.text().strip())
         SETTINGS.set("searxng_url", self.searxng_url.text().strip())
-=======
-        SETTINGS.set("ai_provider_order", order or ["groq", "openrouter", "duckduckgo", "pollinations"])
-        SETTINGS.set("groq_api_key", self.groq_key.text().strip())
-        SETTINGS.set("openserp_url", self.openserp_url.text().strip() or "http://127.0.0.1:7000")
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
         SETTINGS.set("google_cse_api_key", self.cse_key.text().strip())
         SETTINGS.set("google_cse_id", self.cse_id.text().strip())
         web_order = [t.strip() for t in self.web_order.text().split(",") if t.strip()]
         from ..engine import web_search
         SETTINGS.set("web_search_order", web_order or list(web_search._DEFAULT_ORDER))
         SETTINGS.set("headless_headed", self.headless_headed.isChecked())
+        SETTINGS.set("chrome_user_data_dir", self.chrome_user_dir.text().strip())
+        SETTINGS.set("chrome_profile", self.chrome_profile.text().strip())
         SETTINGS.set("custom_ai_base_url", self.custom_url.text().strip())
         SETTINGS.set("custom_ai_model", self.custom_model.text().strip())
         SETTINGS.set("custom_ai_api_key", self.custom_key.text().strip())

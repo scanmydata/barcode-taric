@@ -177,11 +177,7 @@ def best_free_model(timeout: int = 12, tries: int = 4) -> Optional[str]:
 
 def test_providers(timeout: int = 12) -> list[tuple[str, bool, str]]:
     """Debugger: δοκιμάζει κάθε provider της αλυσίδας & επιστρέφει (name, ok, μήνυμα)."""
-<<<<<<< HEAD
     order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
-=======
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     results = []
     for name in order:
         fn = _PROVIDERS.get(name)
@@ -274,7 +270,6 @@ _DEFAULT_ORDER = ["openrouter", "custom", "duckduckgo", "pollinations"]
 
 def ai_available() -> bool:
     """True αν υπάρχει τουλάχιστον ένας provider που μπορεί να απαντήσει."""
-<<<<<<< HEAD
     order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
     if "openrouter" in order and (SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")):
         return True
@@ -283,25 +278,11 @@ def ai_available() -> bool:
     if "pollinations" in order:
         return True  # χωρίς key (αλλά ασταθές — μπορεί να επιστρέψει 402)
     return "duckduckgo" in order
-=======
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
-    if "openrouter" in order and (SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")):
-        return True
-    if "groq" in order and (SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY")):
-        return True
-    # Σημ.: τα no-key (pollinations/duckduckgo) συχνά χρεώνουν/περιορίζονται (402/429),
-    # αλλά τα κρατάμε ως έσχατο fallback — δηλώνουμε «διαθέσιμο» αν είναι στη λίστα.
-    return "pollinations" in order or "duckduckgo" in order
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
 
 
 def chat(prompt: str, *, timeout: int = 20, max_len: int = 600) -> Optional[str]:
     """Καλεί τους providers με τη σειρά ρυθμίσεων· επιστρέφει το πρώτο μη-κενό."""
-<<<<<<< HEAD
     order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
-=======
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
     for name in order:
         fn = _PROVIDERS.get(name)
         if fn is None:

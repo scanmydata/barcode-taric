@@ -272,7 +272,6 @@ def _web_context_for(result: dict[str, Any], barcode: str) -> str:
 
 
 def fetch_product(barcode: str, *, use_ai: bool = True) -> dict[str, Any]:
-<<<<<<< HEAD
     """barcode -> στοιχεία προϊόντος. Δομημένες πηγές πρώτα, μετά Google enrichment.
 
     1) Δοκίμασε τις δομημένες πηγές (OpenFoodFacts/UPC/scrapers) για όνομα/μάρκα/κατηγορία.
@@ -302,36 +301,3 @@ def fetch_product(barcode: str, *, use_ai: bool = True) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             debug(f"ai_infer_from_web raised: {exc}")
     return best
-=======
-    """Επιστρέφει το πρώτο έγκυρο αποτέλεσμα από όλες τις πηγές.
-
-    Δοκιμάζει και τις εναλλακτικές μορφές του κωδικού (raw + κανονική) ώστε ένα
-    EAN-8 να μη «χαθεί» ως λάθος zero-padded EAN-13. Αποτελέσματα με «σκουπίδι»
-    όνομα (τίτλοι site) απορρίπτονται.
-    """
-    variants = barcode_variants(barcode) or [barcode]
-    for fetcher in _FETCHERS:
-        for variant in variants:
-            try:
-                result = fetcher(variant)
-            except Exception as exc:  # noqa: BLE001
-                debug(f"{fetcher.__name__} raised: {exc}")
-                continue
-            if not result.get("found"):
-                continue
-            if _is_junk_name(result.get("product_name")) and not (result.get("description") and not _is_junk_name(result.get("description"))):
-                debug(f"{fetcher.__name__} returned junk name for {variant}, skipping")
-                continue
-            debug(f"Product found via {result.get('source')} for {variant}")
-            return result
-    # Τελευταία γραμμή: AI web-inference (όταν οι δομημένες πηγές δεν βρήκαν τίποτα).
-    if use_ai and ai.ai_available():
-        try:
-            primary = ai_infer_from_web(barcode)
-        except Exception as exc:  # noqa: BLE001
-            debug(f"ai_infer_from_web raised: {exc}")
-            primary = None
-        if primary and primary.get("found") and not _is_junk_name(primary.get("product_name")):
-            return primary
-    return {"source": "none", "found": False}
->>>>>>> f91a0af2a8db04d710b4d264026c0311eea1ae33
