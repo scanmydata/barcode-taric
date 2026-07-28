@@ -26,14 +26,21 @@ class ResolveResult:
     found: bool = False
     is_product: bool = True           # false = υπηρεσία/άυλο -> χωρίς TARIC
     customs_hint: str = ""            # εσωτερικό: είδος/υλικό για matching (δεν εμφανίζεται)
+    analysis: str = ""                # δομημένη «ανάλυση» (hint+κατηγορίες+μάρκα+ποσότητα) -> tariff + ML
     candidates: list = field(default_factory=list)
 
 
-def _clean_categories(categories: str) -> str:
-    """Καθαρίζει τα OpenFoodFacts categories: αφαιρεί language prefixes & tags."""
+def _clean_categories(categories) -> str:
+    """Καθαρίζει τα OpenFoodFacts categories: αφαιρεί language prefixes & tags.
+
+    Δέχεται str Ή list (το AI infer_product μπορεί να επιστρέψει JSON array -> ο
+    παλιός κώδικας έσκαγε με «expected string, got list»).
+    """
     if not categories:
         return ""
-    parts = re.split(r"[,>]", categories)
+    if isinstance(categories, (list, tuple)):
+        categories = ", ".join(str(c) for c in categories)
+    parts = re.split(r"[,>]", str(categories))
     cleaned = []
     for part in parts:
         part = re.sub(r"^[a-z]{2}:", "", part.strip())      # 'en:' , 'fr:'
@@ -190,11 +197,15 @@ def _apply_match(result: ResolveResult, *, use_ai: bool) -> None:
     # Στην κατάταξη δίνουμε ΟΝΟΜΑΣΙΑ + customs_hint (είδος/υλικό) + κατηγορίες:
     # το hint ξεχωρίζει π.χ. «μεταλλικό νερό» (2201) από «toilet water» (3303).
     hint = result.customs_hint
+    # Δομημένη «ανάλυση» προϊόντος (αποθηκεύεται πίσω από την περιγραφή): υλικό/τύπος (hint) +
+    # κατηγορίες + μάρκα + ποσότητα. Χρησιμεύει για ακριβέστερη κατάταξη ΚΑΙ ως ML feature.
+    result.analysis = " · ".join(p for p in (
+        hint, result.categories, result.brand, result.quantity) if p)
     el = " ".join(p for p in (result.description_el, hint, result.categories) if p).strip()
     en = " ".join(p for p in (result.description_en, hint, result.categories) if p).strip()
     m = taric_match.match(el, en, barcode=result.barcode, brand=result.brand,
                           quantity=result.quantity, categories=result.categories,
-                          source=result.source, use_ai=use_ai)
+                          analysis=result.analysis, source=result.source, use_ai=use_ai)
     result.taric_code = m.taric_code
     result.hs4 = m.hs4
     result.taric_description = m.taric_description

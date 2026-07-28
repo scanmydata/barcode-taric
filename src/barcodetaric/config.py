@@ -22,6 +22,7 @@ REG_PATH = r"Software\scanmydata\BarcodeTaric"
 # Προεπιλογές ρυθμίσεων. Το settings.json υπερισχύει, το env υπερισχύει όλων.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
+<<<<<<< HEAD
     # OpenRouter πρώτο (δωρεάν :free μοντέλα με key). Το Groq μένει ως επιλογή αλλά
     # θέλει login/κλειδί που δεν είναι πάντα διαθέσιμο. Τα no-key (pollinations/
     # duckduckgo) χρεώνουν/περιορίζονται πλέον (402/429) — έσχατο fallback.
@@ -33,12 +34,28 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "custom_ai_url": "",
     "custom_ai_key": "",
     "custom_ai_model": "llama3.1",
+=======
+    "ai_provider_order": ["openrouter", "custom", "duckduckgo", "pollinations"],
+    # Το free-model landscape του OpenRouter αλλάζει· κράτα ένα ΕΝΕΡΓΟ default.
+    # (το παλιό llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
+    "openrouter_model": "openai/gpt-oss-20b:free",
+    "openrouter_api_key": "",
+    # Custom OpenAI-συμβατό endpoint (μελλοντικό/προαιρετικό): base URL + model + key.
+    # Αν συμπληρωθεί το custom_ai_base_url, ο provider «custom» γίνεται διαθέσιμος.
+    "custom_ai_base_url": "",   # π.χ. https://my-host/v1  ή  …/v1/chat/completions
+    "custom_ai_model": "",      # π.χ. qwen2.5:7b (Ollama μέσω Cloudflare tunnel)
+    "custom_ai_api_key": "",
+    "custom_ai_timeout": 90,    # local LLM αργεί στο πρώτο token
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     "google_cse_api_key": "",
     "google_cse_id": "",
-    # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα
-    # χωρίς API key — github.com/karust/openserp. Αν τρέχει, προτιμάται πρώτο.
+    # SearXNG meta-search (self-host ή public instance με JSON API ενεργό).
+    "searxng_url": "",          # π.χ. https://searx.example.org  ή  http://127.0.0.1:8888
+    # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα χωρίς API key
+    # — github.com/karust/openserp. Αν τρέχει, μπορείς να τον βάλεις στη σειρά ως «openserp».
     "openserp_url": "http://127.0.0.1:7000",
     "openserp_engine": "google",
+<<<<<<< HEAD
     "openserp_timeout": 45,      # ο headless browser είναι αργός στο πρώτο query
     # SearXNG: self-hosted μετα-μηχανή (πολλές μηχανές μαζί, χωρίς key). Ιδανικό στο
     # μηχάνημα του τοπικού LLM. Απαιτεί `format: json` στο settings.yml του SearXNG.
@@ -65,6 +82,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # λείπει, το tier παρακάμπτεται σιωπηλά.
     "semantic_enabled": True,
     "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+=======
+    "openserp_timeout": 45,     # ο headless browser του OpenSERP αργεί στο πρώτο query
+    # headless = πραγματικό Chrome μέσω Selenium (παρακάμπτει το Google scraping-block).
+    "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
+    "headless_headed": False,   # true = ορατό παράθυρο Chrome (λιγότερο ανιχνεύσιμο ως bot)
+    # Χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome του υπολογιστή (cookies/consent/login) ώστε η Google
+    # να μη σε περνά για bot. Άφησε κενό για καθαρό προφίλ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
+    "chrome_user_data_dir": "",
+    "chrome_profile": "",       # π.χ. "Default" ή "Profile 1" (μαζί με το user_data_dir)
+    "web_search_order": ["searxng", "duckduckgo", "headless", "googlesearch", "google_cse"],
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,
@@ -156,7 +184,8 @@ class Settings:
             json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         # Κράτα και τα κλειδιά AI στο process environment ώστε να τα δει η μηχανή.
-        for env_key in ("openrouter_api_key", "google_cse_api_key", "google_cse_id", "groq_api_key"):
+        for env_key in ("openrouter_api_key", "google_cse_api_key", "google_cse_id",
+                        "groq_api_key", "custom_ai_api_key"):
             val = self._data.get(env_key)
             if val:
                 os.environ[env_key.upper()] = str(val)

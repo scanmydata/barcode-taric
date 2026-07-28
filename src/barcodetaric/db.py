@@ -168,6 +168,7 @@ def init_db(path: Path | None = None) -> None:
         for table in ("catalog", "client_items"):
             _ensure_columns(c, table, {
                 "brand": "TEXT", "quantity": "TEXT", "categories": "TEXT",
+                "analysis": "TEXT",   # δομημένη ανάλυση προϊόντος (tariff hint + ML feature)
             })
         _ensure_columns(c, "taric_nomenclature", {
             "description_path_el": "TEXT", "description_path_en": "TEXT",

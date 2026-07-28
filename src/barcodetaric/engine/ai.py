@@ -43,19 +43,47 @@ def _parse_ai_text(response: Any) -> Optional[str]:
     return None
 
 
+DEFAULT_FREE_MODEL = "openai/gpt-oss-20b:free"
+
+# Προτιμώμενες οικογένειες (καλά instruct μοντέλα για ταξινόμηση/JSON). Ό,τι ταιριάζει
+# ανεβαίνει στην κορυφή της λίστας/δοκιμής. Χαμηλότερα = generic router fallback.
+_PREFERRED_FREE = (
+    "openai/gpt-oss", "deepseek", "qwen", "meta-llama/llama-3.3", "meta-llama/llama-3.1",
+    "google/gemma", "mistral", "nvidia/nemotron", "openrouter/free",
+)
+# Μοντέλα που ΔΕΝ κάνουν για chat/JSON (audio/image/video/embeddings/moderation) — εκτός.
+_EXCLUDE_FREE = (
+    "lyria", "whisper", "tts", "audio", "vision-only", "embedding", "embed",
+    "content-safety", "moderation", "guard", "rerank", "image", "sdxl", "flux", "clip",
+)
+
+# Session cache: το τελευταίο μοντέλο που όντως απάντησε (για auto-fallback).
+_WORKING_MODEL: Optional[str] = None
+
+
 def _ensure_free(model: str) -> str:
     """Εγγύηση ότι χρησιμοποιείται ΜΟΝΟ δωρεάν μοντέλο OpenRouter (:free suffix)."""
-    model = (model or "").strip() or "meta-llama/llama-3.3-70b-instruct:free"
-    if not model.endswith(":free"):
-        model = f"{model}:free"
-    return model
+    model = (model or "").strip() or DEFAULT_FREE_MODEL
+    # generic router alias (openrouter/free) δεν παίρνει :free suffix
+    if model == "openrouter/free" or model.endswith(":free"):
+        return model
+    return f"{model}:free"
 
 
-def _openrouter(prompt: str, timeout: int) -> Optional[str]:
+def _rank_free(models: list[str]) -> list[str]:
+    """Ταξινόμηση δωρεάν μοντέλων: προτιμώμενες οικογένειες πρώτα, με σταθερή σειρά."""
+    def key(mid: str):
+        low = mid.lower()
+        rank = next((i for i, fam in enumerate(_PREFERRED_FREE) if fam in low), len(_PREFERRED_FREE))
+        return (rank, mid)
+    return sorted(models, key=key)
+
+
+def _openrouter_call(model: str, prompt: str, timeout: int) -> Optional[str]:
+    """Μία κλήση σε συγκεκριμένο μοντέλο. Πετάει HTTPError σε 404 (μοντέλο δεν υπάρχει)."""
     api_key = SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         return None
-    model = _ensure_free(SETTINGS.get("openrouter_model"))
     payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
     response = http_json(
         OPENROUTER_URL, method="POST", body=payload,
@@ -63,15 +91,47 @@ def _openrouter(prompt: str, timeout: int) -> Optional[str]:
                  "HTTP-Referer": "https://barcodetaric.local",
                  "X-Title": "BarcodeTaric"}, timeout=timeout,
     )
-    # Αν το OpenRouter επιστρέψει σφάλμα (π.χ. μη-δωρεάν/rate limit), κατέγραψέ το.
     if isinstance(response, dict) and response.get("error"):
-        debug(f"OpenRouter error: {response.get('error')}")
+        debug(f"OpenRouter error ({model}): {response.get('error')}")
         return None
     return _parse_ai_text(response)
 
 
+def _openrouter(prompt: str, timeout: int) -> Optional[str]:
+    global _WORKING_MODEL
+    api_key = SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    # Σειρά δοκιμής: working-cache -> ρυθμισμένο -> γνωστό-καλό default -> generic router.
+    # (το openrouter/free δίνει απρόβλεπτη έξοδο, μπαίνει ΤΕΛΕΥΤΑΙΟ.)
+    chain: list[str] = []
+    for m in (_WORKING_MODEL, _ensure_free(SETTINGS.get("openrouter_model")),
+              DEFAULT_FREE_MODEL, "openrouter/free"):
+        if m and m not in chain:
+            chain.append(m)
+    for model in chain:
+        try:
+            result = _openrouter_call(model, prompt, timeout)
+        except urllib.error.HTTPError as exc:
+            # 404 = μοντέλο αποσύρθηκε/δεν υπάρχει -> δοκίμασε το επόμενο στην αλυσίδα.
+            if exc.code in (400, 404):
+                debug(f"OpenRouter model '{model}' -> HTTP {exc.code}, fallback στο επόμενο")
+                continue
+            raise
+        if result:
+            if model != _WORKING_MODEL:
+                debug(f"OpenRouter working model: {model}")
+                _WORKING_MODEL = model
+            return result
+    return None
+
+
 def list_free_models(timeout: int = 15) -> list[str]:
-    """Λίστα δωρεάν μοντέλων OpenRouter (pricing prompt==0) — για επιλογή στις ρυθμίσεις."""
+    """Δωρεάν chat μοντέλα OpenRouter (pricing prompt==0), φιλτραρισμένα & ταξινομημένα.
+
+    Αποκλείει audio/image/embedding/moderation μοντέλα και βάζει τις καλές instruct
+    οικογένειες πρώτες (βλ. `_rank_free`) ώστε η «έξυπνη» επιλογή να πετύχει γρήγορα.
+    """
     try:
         data = http_json("https://openrouter.ai/api/v1/models", timeout=timeout)
     except Exception as exc:  # noqa: BLE001
@@ -80,15 +140,44 @@ def list_free_models(timeout: int = 15) -> list[str]:
     out = []
     for m in (data.get("data") or []):
         mid = m.get("id", "")
+        low = mid.lower()
         pricing = m.get("pricing") or {}
-        if mid.endswith(":free") or (str(pricing.get("prompt", "1")) in ("0", "0.0")):
-            out.append(mid)
-    return sorted(set(out))
+        is_free = mid.endswith(":free") or (str(pricing.get("prompt", "1")) in ("0", "0.0"))
+        if not is_free or any(bad in low for bad in _EXCLUDE_FREE):
+            continue
+        # κράτα μόνο μοντέλα με text output (αν το API δίνει modalities)
+        modalities = ((m.get("architecture") or {}).get("output_modalities")) or ["text"]
+        if "text" not in modalities:
+            continue
+        out.append(mid)
+    return _rank_free(list(set(out)))
+
+
+def best_free_model(timeout: int = 12, tries: int = 4) -> Optional[str]:
+    """«Έξυπνη» επιλογή: δοκιμάζει τα κορυφαία δωρεάν μοντέλα & επιστρέφει το 1ο που απαντά.
+
+    Χρήσιμο όταν το αποθηκευμένο μοντέλο αποσύρθηκε (404). Αποθηκεύει το εύρημα σε
+    `_WORKING_MODEL` για αυτόματο fallback μέσα στη session.
+    """
+    global _WORKING_MODEL
+    api_key = SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    candidates = list_free_models(timeout=timeout)[:tries] or [DEFAULT_FREE_MODEL, "openrouter/free"]
+    for mid in candidates:
+        try:
+            if _openrouter_call(mid, "Reply with the single word OK.", timeout):
+                _WORKING_MODEL = mid
+                debug(f"best_free_model picked: {mid}")
+                return mid
+        except Exception as exc:  # noqa: BLE001
+            debug(f"best_free_model: {mid} failed: {exc}")
+    return None
 
 
 def test_providers(timeout: int = 12) -> list[tuple[str, bool, str]]:
     """Debugger: δοκιμάζει κάθε provider της αλυσίδας & επιστρέφει (name, ok, μήνυμα)."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
+    order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
     results = []
     for name in order:
         fn = _PROVIDERS.get(name)
@@ -101,6 +190,37 @@ def test_providers(timeout: int = 12) -> list[tuple[str, bool, str]]:
         except Exception as exc:  # noqa: BLE001
             results.append((name, False, f"{type(exc).__name__}: {str(exc)[:60]}"))
     return results
+
+
+def _custom(prompt: str, timeout: int) -> Optional[str]:
+    """Custom OpenAI-συμβατό endpoint (μελλοντικό/on-prem).
+
+    Ενεργοποιείται μόνο αν έχει οριστεί `custom_ai_base_url`. Δέχεται είτε πλήρες
+    URL (…/chat/completions) είτε base (…/v1) και προσθέτει το path. Χωρίς περιορισμό
+    :free — ο χρήστης ελέγχει το endpoint και το κόστος του.
+    """
+    base = (SETTINGS.get("custom_ai_base_url") or "").strip()
+    if not base:
+        return None
+    # Δέχεται είτε πλήρες …/chat/completions είτε base …/v1 (π.χ. Ollama μέσω Cloudflare
+    # tunnel: https://xxx.trycloudflare.com/v1). Προσθέτει το path αν λείπει.
+    url = base if "/chat/completions" in base else base.rstrip("/") + "/chat/completions"
+    model = (SETTINGS.get("custom_ai_model") or "").strip() or "gpt-3.5-turbo"
+    api_key = SETTINGS.get("custom_ai_api_key") or os.getenv("CUSTOM_AI_API_KEY") or ""
+    headers = {"Content-Type": "application/json"}
+    if api_key:  # Ollama δεν χρειάζεται key· cloud endpoints ίσως ναι.
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    # Local LLM (qwen σε Ollama) μπορεί να αργεί στο πρώτο token -> γενναιόδωρο timeout.
+    try:
+        eff_timeout = max(timeout, int(SETTINGS.get("custom_ai_timeout") or 90))
+    except (TypeError, ValueError):
+        eff_timeout = max(timeout, 90)
+    response = http_json(url, method="POST", body=payload, headers=headers, timeout=eff_timeout)
+    if isinstance(response, dict) and response.get("error"):
+        debug(f"custom endpoint error: {response.get('error')}")
+        return None
+    return _parse_ai_text(response)
 
 
 def _pollinations(prompt: str, timeout: int) -> Optional[str]:
@@ -180,29 +300,36 @@ def _groq(prompt: str, timeout: int) -> Optional[str]:
 _PROVIDERS = {
     "custom": _custom,
     "openrouter": _openrouter,
+    "custom": _custom,
     "pollinations": _pollinations,
     "duckduckgo": _duckduckgo,
     "groq": _groq,
 }
 
+_DEFAULT_ORDER = ["openrouter", "custom", "duckduckgo", "pollinations"]
+
 
 def ai_available() -> bool:
     """True αν υπάρχει τουλάχιστον ένας provider που μπορεί να απαντήσει."""
+<<<<<<< HEAD
     order = SETTINGS.get("ai_provider_order") or ["custom", "openrouter", "groq", "duckduckgo", "pollinations"]
     if "custom" in order and (SETTINGS.get("custom_ai_url") or "").strip():
         return True
+=======
+    order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     if "openrouter" in order and (SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")):
         return True
-    if "groq" in order and (SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY")):
+    if "custom" in order and (SETTINGS.get("custom_ai_base_url") or "").strip():
         return True
-    # Σημ.: τα no-key (pollinations/duckduckgo) συχνά χρεώνουν/περιορίζονται (402/429),
-    # αλλά τα κρατάμε ως έσχατο fallback — δηλώνουμε «διαθέσιμο» αν είναι στη λίστα.
-    return "pollinations" in order or "duckduckgo" in order
+    if "pollinations" in order:
+        return True  # χωρίς key (αλλά ασταθές — μπορεί να επιστρέψει 402)
+    return "duckduckgo" in order
 
 
 def chat(prompt: str, *, timeout: int = 20, max_len: int = 600) -> Optional[str]:
     """Καλεί τους providers με τη σειρά ρυθμίσεων· επιστρέφει το πρώτο μη-κενό."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
+    order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER
     for name in order:
         fn = _PROVIDERS.get(name)
         if fn is None:
@@ -234,11 +361,12 @@ def rewrite_to_customs_text(text: str) -> Optional[str]:
 
 
 def enrich_description(name: str, *, brand: str = "", categories: str = "",
-                       quantity: str = "") -> Optional[str]:
+                       quantity: str = "", web_context: str = "") -> Optional[str]:
     """Παράγει ΑΝΑΛΥΤΙΚΗ περιγραφή προϊόντος (EL) για τελωνειακή κατάταξη.
 
-    Αξιοποιεί μάρκα + κατηγορίες + ποσότητα ώστε ένα σκέτο brand name (π.χ. «Merenda»)
-    να γίνει «προϊόν κακάο για επάλειψη με φουντούκι, 360g» — χρήσιμο και για matching.
+    Αξιοποιεί μάρκα + κατηγορίες + ποσότητα + (προαιρετικά) πραγματικά αποτελέσματα Google
+    ώστε ένα σκέτο brand name (π.χ. «Merenda») να γίνει «κρέμα κακάο-φουντούκι για επάλειψη,
+    360g» — χρήσιμο και για το matching.
     """
     context = "\n".join(p for p in (
         f"Όνομα/μάρκα: {name}" if name else "",
@@ -246,10 +374,19 @@ def enrich_description(name: str, *, brand: str = "", categories: str = "",
         f"Κατηγορίες: {categories}" if categories else "",
         f"Ποσότητα/μέγεθος: {quantity}" if quantity else "",
     ) if p)
+    if web_context:
+        context += ("\nΒοηθητικά web snippets (ΠΡΟΣΟΧΗ: μπορεί να αφορούν ΑΛΛΟ/παρόμοιο προϊόν — "
+                    "χρησιμοποίησέ τα ΜΟΝΟ αν συμφωνούν με το όνομα/μάρκα παραπάνω):\n"
+                    f"{web_context[:1000]}")
     prompt = (
-        "Δώσε μία σύντομη αλλά ΑΝΑΛΥΤΙΚΗ περιγραφή του προϊόντος στα Ελληνικά, κατάλληλη για "
-        "τελωνειακή κατάταξη (TARIC): τι ακριβώς είναι, υλικό/σύσταση, χρήση, και μέγεθος/ποσότητα "
-        "αν δίνεται. Μία-δύο προτάσεις, χωρίς εισαγωγικά ή σχόλια.\n" + context
+        "Είσαι ειδικός τελωνειακής κατάταξης. Με βάση ΚΥΡΙΩΣ το όνομα/μάρκα/κατηγορίες του προϊόντος, "
+        "γράψε ΜΙΑ σύντομη αλλά ουσιαστική περιγραφή στα Ελληνικά για κατάταξη TARIC. "
+        "Ανάφερε: (1) τι ΑΚΡΙΒΩΣ είναι το προϊόν (γενικός τύπος, όχι μόνο η μάρκα), "
+        "(2) υλικό/σύσταση, (3) χρήση, (4) μέγεθος/ποσότητα αν δίνεται.\n"
+        "ΚΑΝΟΝΕΣ: ΜΗΝ εφευρίσκεις συστατικά ή στοιχεία που δεν δίνονται. Αν το όνομα είναι γνωστό "
+        "προϊόν, βασίσου στο τι είναι πραγματικά. Αν τα web snippets αφορούν διαφορετικό προϊόν, "
+        "ΑΓΝΟΗΣΕ τα. 1-2 προτάσεις, καθαρό κείμενο χωρίς εισαγωγικά/σχόλια/«Περιγραφή:».\n"
+        + context
     )
     return chat(prompt, max_len=300)
 
@@ -269,10 +406,12 @@ def infer_product(barcode: str, web_context: str = "") -> Optional[dict[str, Any
     """Ζητά από το AI να συμπεράνει μεταδεδομένα προϊόντος από web snippets."""
     if web_context:
         prompt = (
-            "You are given web search snippets for a barcode. Infer likely product metadata. "
-            "Return ONLY valid JSON with keys: product_name, brand, categories, description, "
-            "confidence. Description in English, concise. If uncertain, empty strings and "
-            f"confidence='low'.\nBarcode: {barcode}\nWeb snippets:\n{web_context}"
+            "You are given real web search snippets for a product barcode (EAN/UPC). "
+            "Identify the actual product. Return ONLY valid JSON with keys: product_name, brand, "
+            "categories, description, confidence. 'description' must state the generic product TYPE, "
+            "material/composition and size if present (English, concise, factual — no marketing). "
+            "Base it on the snippets; do NOT invent. If the snippets are unrelated to the barcode, "
+            f"use empty strings and confidence='low'.\nBarcode: {barcode}\nWeb snippets:\n{web_context}"
         )
     else:
         prompt = (
@@ -355,10 +494,16 @@ def rank_taric(description: str, candidates: list[dict[str, Any]]) -> Optional[d
         for i, c in enumerate(candidates)
     )
     prompt = (
-        "You are a customs classification assistant. Given a product description and a list of "
-        "candidate EU TARIC codes, pick the single best code. Return ONLY valid JSON with keys: "
-        "code (exactly one of the candidate codes), rationale (one short sentence, Greek), "
-        "confidence (0..1).\n"
+        "You are an expert EU customs (TARIC/Combined Nomenclature) classifier. "
+        "Choose the SINGLE best-matching code for the product from the candidate list below.\n"
+        "Rules:\n"
+        "- Classify by what the product ESSENTIALLY is (material, composition, function), not by brand.\n"
+        "- Prefer the most SPECIFIC matching heading; use a generic/'other' (…90/…99) code only if "
+        "no specific one fits.\n"
+        "- The chosen code MUST be exactly one of the candidate codes (copy it verbatim).\n"
+        "- If several fit, pick the one whose description best matches the material & use.\n"
+        "Return ONLY valid JSON: {\"code\": \"<one candidate code>\", "
+        "\"rationale\": \"<μία σύντομη πρόταση στα Ελληνικά>\", \"confidence\": <0..1>}.\n"
         f"Product: {description}\nCandidates:\n{lines}"
     )
     data = _extract_json(chat(prompt, timeout=25, max_len=500))

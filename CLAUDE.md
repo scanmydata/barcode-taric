@@ -3,6 +3,13 @@
 Αυτό το αρχείο φορτώνεται αυτόματα από το Claude Code. Περιγράφει **τι είναι** το
 project, **πώς λειτουργεί** και **τι πρέπει να προσέχεις** πριν αλλάξεις κώδικα.
 
+> **Πρόσφατα (round 3):** διορθώθηκε committed merge-conflict (HEAD searxng/custom/headless +
+> f91a0af OpenSERP/chapter-prior/junk-filter ενοποιήθηκαν). Νέα: chapter-prior (food source ->
+> κεφ. 01-24), brand-stripping + IDF cap + union retrieval στο matching, custom AI endpoint
+> (Ollama/Cloudflare), smart free-model pick + auto-fallback σε 404, πίνακες
+> sortable/reorderable/multi-select (id σε `Qt.UserRole`, ΟΧΙ positional), headless Chrome με
+> προφίλ χρήστη. Το `conftest.py` **εξουδετερώνει network** (αλλιώς το suite κρέμαγε σε real AI/Chrome).
+
 ## Τι είναι
 
 `BarcodeTaric` — τοπικό **desktop app (PySide6/Qt6)** για ελληνικά τελωνειακά/λογιστικά:
@@ -47,12 +54,23 @@ cli.py        console entry (project.scripts: barcodetaric)
 
 engine/       καθαρή μηχανή (χωρίς Qt, χωρίς SQL εκτός μέσω repo)
   http_util.py     urllib helpers, text normalisation, stem_token (EL+EN light stemmer)
+<<<<<<< HEAD
   ai.py            provider chain: custom(OpenAI-compat, π.χ. local ollama)->openrouter(:free)->groq->
                    duckduckgo->pollinations. chat()/translate()/
                    infer_product()/rank_taric()/rationalize(). Διαβάζει SETTINGS.
   web_search.py    Google results σε tiers (σειρά ταχύτητας): SearXNG(self-hosted meta) -> OpenSERP
                    (headless) -> Brave API -> Google CSE -> DuckDuckGo HTML -> googlesearch(αργό, έσχατο).
                    name_corroboration(): non-AI cross-check ονομασίας με τα αποτελέσματα.
+=======
+  ai.py            provider chain: openrouter(:free)->custom->duckduckgo->pollinations, groq stub. chat()/
+                   translate()/infer_product()/rank_taric()/rationalize()/enrich_description(web_context).
+                   `_openrouter` έχει AUTO-FALLBACK σε 404 (working->configured->DEFAULT_FREE_MODEL->
+                   openrouter/free, με cache `_WORKING_MODEL`). `best_free_model()`=smart pick, `list_free_models`
+                   φιλτράρει+ταξινομεί chat μοντέλα. `_custom`=OpenAI-συμβατό (Ollama/cloudflare, /v1 base ok).
+  web_search.py    web results 5 tiers: SearXNG(JSON) -> DuckDuckGo -> headless(Selenium/Chrome, Google με JS)
+                   -> googlesearch-python -> Google CSE. `_via_headless` παρακάμπτει το scraping-block αλλά η
+                   Google το CAPTCHA-ρει (/sorry) σε συχνά queries. test_tiers()=debugger. Cached driver.
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
   barcode_sources.py  multi-source lookup + EAN13 helpers. fetch_product() = AI/web -> OFF/UPC/scrapers.
   translation_api.py ΔΩΡΕΑΝ μετάφραση EL<->EN ΧΩΡΙΣ LLM: MyMemory (no key, μνήμη ΕΕ/ΟΗΕ) +
                    LibreTranslate (optional). cache. to_english()/to_greek(). Βασική γλώσσα
@@ -128,19 +146,31 @@ AI enrichment (αναλυτική περιγραφή με μέγεθος) → ma
 
 ## AI & web (όλα δωρεάν)
 
-- Provider chain στο `ai.py`, σειρά από `SETTINGS["ai_provider_order"]`. **OpenRouter** (χρειάζεται
-  `OPENROUTER_API_KEY`, **ΜΟΝΟ** `:free` μοντέλα — το `_ensure_free()` προσθέτει αυτόματα το suffix) →
-  **DuckDuckGo** chat → **Pollinations** (χωρίς key). **Groq** stub (`groq_enabled`, μελλοντικό).
+- Provider chain στο `ai.py`, σειρά από `SETTINGS["ai_provider_order"]` (default `_DEFAULT_ORDER =
+  openrouter, custom, duckduckgo, pollinations`). **OpenRouter** (χρειάζεται `OPENROUTER_API_KEY`,
+  **ΜΟΝΟ** `:free` μοντέλα — το `_ensure_free()` προσθέτει suffix· εξαίρεση ο alias `openrouter/free`) →
+  **custom** (δικό σου endpoint, βλ. κάτω) → **DuckDuckGo** chat → **Pollinations**. **Groq** stub.
+- **Custom AI endpoint** (`_custom`): OpenAI-συμβατό, ενεργό μόνο αν `custom_ai_base_url` οριστεί.
+  Δέχεται πλήρες URL ή base (προσθέτει `/chat/completions`). Fields: `custom_ai_base_url/model/key`.
+  Ο μόνος provider ΧΩΡΙΣ `:free` περιορισμό — για μελλοντικά/on-prem prompts.
 - `ai.list_free_models()` (φιλτράρει pricing==0 από OpenRouter), `ai.test_providers()` (debugger).
+  `ai.DEFAULT_FREE_MODEL = "openai/gpt-oss-20b:free"`.
 - **Logging/debugger** στο `logs.py`: rotating αρχείο `data-dir/logs/barcodetaric.log` + in-memory ring
-  buffer. Το `http_util.debug()` γράφει κι εκεί. Στο settings_page: «Έλεγχος AI providers» + άνοιγμα log.
-- Web results στο `web_search.py`: googlesearch-python → Google CSE (αν key+cse_id) → DuckDuckGo HTML.
+  buffer. Το `http_util.debug()` γράφει κι εκεί. Στο settings_page: «Έλεγχος AI providers»,
+  «Έλεγχος web search» (`web_search.test_tiers()`) + άνοιγμα log.
+- Web results στο `web_search.py`: **SearXNG** (`searxng_url`, JSON API) → googlesearch-python →
+  Google CSE (αν key+cse_id) → DuckDuckGo HTML. SearXNG = [searxng/searxng]; ίδιο endpoint με το
+  [ihor-sokoliuk/mcp-searxng]. Public instances συχνά κλείνουν το `format=json` → self-host προτείνεται.
 - Keys/ρυθμίσεις: αποθηκεύονται στο `settings.json` (data-dir) + env vars, μέσω `SETTINGS.save()`.
-  Το env var υπερισχύει του settings.json (π.χ. `OPENROUTER_API_KEY`).
+  Το env var υπερισχύει του settings.json (π.χ. `OPENROUTER_API_KEY`, `CUSTOM_AI_API_KEY`).
 
 ## ML (scikit-learn, τοπικό, δωρεάν)
 
-- Features: `description_el + description_en + gs1_<barcode-prefix>` → TF-IDF (word 1-2grams).
+- Features: `description_el/en + brand + quantity + categories + analysis + gs1_<prefix>` →
+  **TF-IDF word(1-2) + char_wb(3-5)** (FeatureUnion) → LogisticRegression. Τα char n-grams
+  πιάνουν ελληνική μορφολογία/brand παραλλαγές. Το πεδίο `analysis` (υλικό/τύπος/κατηγορίες/
+  μάρκα/ποσότητα) αποθηκεύεται στη βάση (catalog/client_items) και τροφοδοτεί ΚΑΙ το matching
+  ΚΑΙ το ML. Μελλοντικά: sentence-embeddings ως optional extra (ίδιο interface· βλ. README).
 - Δύο μοντέλα: πλήρες TARIC code + HS4 heading. Χαμηλή βεβαιότητα στο πλήρες → πέφτει στο HS4.
 - Εκπαίδευση από `repo.verified_training_rows()` (verified=1 σε client_items ∪ catalog). Απαιτεί
   `ml_min_samples` (default 40· στα tests μειώνεται). Persistence: `model.joblib` στο data-dir + `ml_meta`.
@@ -180,12 +210,55 @@ AI enrichment (αναλυτική περιγραφή με μέγεθος) → ma
    taric_nomenclature έχουν ήδη migrations για brand/quantity/categories & description_path_el/en).
 9. **Αυτόματη ενημέρωση.** Με `SETTINGS["auto_update_taric"]` (default True), στην εκκίνηση το
    `main_window._startup_taric_check()` ελέγχει το CIRCABC και κατεβάζει background αν λείπει/παλιά.
+10. **OpenRouter free models αποσύρονται.** Η #1 αιτία «λάθος TARIC»: όταν το αποθηκευμένο μοντέλο
+   πάψει να είναι δωρεάν/υπαρκτό, το OpenRouter γυρνά **404**, το `rank_taric()` επιστρέφει None και το
+   matching πέφτει στον σκέτο FTS top-candidate (συχνά λάθος). Πλέον το `_openrouter` κάνει **auto-fallback**
+   (βλ. architecture) οπότε μια 404 δεν σπάει τη ροή· αλλά ΠΑΝΤΑ διάγνωση με `ai.test_providers()` πριν
+   υποθέσεις bug στο matching. Το `ai.DEFAULT_FREE_MODEL` ενημερώνεται όταν αλλάζει το free landscape·
+   τα stored `settings.json` κάνουν override το default, οπότε migration (ενημέρωση `openrouter_model`)
+   χρειάζεται και εκεί. **Προσοχή:** `openrouter/free` (generic router) δίνει απρόβλεπτη έξοδο (π.χ.
+   "User Safety: safe") — μπαίνει ΤΕΛΕΥΤΑΙΟ στο fallback, μετά το DEFAULT_FREE_MODEL.
+13. **Google μπλοκάρει το scraping.** Το `googlesearch-python` παίρνει πλέον σελίδα ~2.5KB χωρίς
+   αποτελέσματα (μόνο JS). Το `_via_headless` (Selenium+Chrome) εκτελεί JS και ΔΟΥΛΕΥΕΙ — αλλά η Google
+   ανακατευθύνει στο `/sorry` (reCAPTCHA) σε συχνά queries (IP reputation/rate). ΔΕΝ λύνουμε CAPTCHA.
+   Γι' αυτό η default σειρά βάζει searxng/duckduckgo πρώτα (γρήγορα/αξιόπιστα) και το headless ως fallback.
+   Ο driver είναι cached (`_HEADLESS_DRIVER`)· stealth flags + `navigator.webdriver=undefined` μειώνουν
+   το detection· χρειάζεται WebDriverWait για render πριν το parsing (αλλιώς 0 blocks). selenium = optional
+   extra (`.[headless]`) — αν λείπει, το tier επιστρέφει [] σιωπηλά (δεν σπάει το app/installer).
+14. **Το web enrichment είναι δίκοπο.** Η ποιότητα του web tier επηρεάζει ΑΜΕΣΑ την περιγραφή→TARIC.
+   Παράδειγμα: barcode Merenda -> headless-Google έδωσε σωστά ελληνικά («πραλίνα φουντουκιού») αλλά
+   DuckDuckGo έδωσε ιταλικό «Ferrero merendina» (ΑΛΛΟ προϊόν, snack cake) -> το AI enrichment παρήγαγε
+   λάθος περιγραφή -> λάθος TARIC (1804/2007 αντί 1806). Άμυνες (με σειρά σημασίας):
+   (α) **GATING** στο `resolve`: το `web_context` πάει στο `enrich_description` ΜΟΝΟ όταν λείπουν
+   κατηγορίες (`enrich_web = web_context if not categories else ""`). Αν το OpenFoodFacts έδωσε
+   κατηγορίες, τις εμπιστευόμαστε — το web μπαίνει μόνο για να ΓΕΜΙΣΕΙ κενά (cold data), όχι να
+   overrideάρει καλά δομημένα. (β) `_web_context_for` disambiguation hint (όνομα+μάρκα+ΕΙΔΙΚΗ κατηγορία,
+   skip generic «breakfasts/spreads»). (γ) prompt «ΜΗΝ εφευρίσκεις, αγνόησε άσχετα snippets». Το μικρό
+   free model (gpt-oss-20b) ΘΑ κάνει hallucinate με θορυβώδες context παρά τις οδηγίες — γι' αυτό το
+   gating (α) είναι το πραγματικό fix, όχι το prompt.
+11. **GUI horizontal overflow.** QLabel χωρίς `setWordWrap(True)` (βοηθητικά muted/h2 κείμενα) και
+   πολλά κουμπιά σε ένα `QHBoxLayout` έχουν minimumSizeHint φαρδύτερο από το viewport → το card «σπρώχνει»
+   πέρα από το παράθυρο και **κόβεται δεξιά** (χωρίς horizontal scrollbar). Οι `widgets.muted()/h2()` έχουν
+   πλέον word-wrap· debug buttons σε 2×2 `QGridLayout`· editable model combo shrinkable + settings scroll
+   με `HorizontalScrollBarPolicy=Off`. Έλεγχος: render offscreen (`QT_QPA_PLATFORM=offscreen`) + `widget.grab()`.
+12. **Αυτόματη άντληση ΑΦΜ.** Στο `client_dialog`, `textChanged`→`QTimer(500ms, singleShot)`→`_maybe_auto_fetch`
+   πυροδοτεί lookup μόλις ο ΑΦΜ γίνει έγκυρος **9ψήφιος** (dedup με `_last_afm`, silent σε αποτυχία).
+   Το κουμπί «Άντληση» μένει για χειροκίνητη (μη-silent) άντληση.
 
 ## Installer
 
 `installer/`: `barcodetaric.spec` (PyInstaller one-dir, όχι one-file), `barcodetaric.iss` (Inno Setup,
 `PrivilegesRequired=lowest`, HKCU `DataDir`/`InstallDir`, ελληνικός wizard), `build.ps1` (venv→icon→
 PyInstaller→ISCC), `make_icon.py` (φτιάχνει icon.ico με PySide6, χωρίς εξωτερικά assets).
+
+**Packaging invariant:** SearXNG, το custom AI endpoint και η auto-άντληση ΑΦΜ **δεν προσθέτουν
+runtime dependencies** — όλα με stdlib `urllib` (`http_util`). Τα βασικά search tiers (SearXNG/CSE/DDG)
+είναι HTTP JSON/HTML, όχι browser automation. Ο PyInstaller bundle & το `.iss` μένουν ως έχουν, και
+το SearXNG/Ollama τρέχουν **εκτός** του app (δίνεις μόνο URL στις Ρυθμίσεις).
+Το **headless tier** (Selenium) είναι **optional extra** (`.[headless]`), ΔΕΝ μπαίνει στο default bundle:
+lazy import, graceful skip αν λείπει. Αν κάποιος θέλει headless στον installer, πρόσθεσε `selenium` στο
+`.spec` (hiddenimports) — αλλά ο χρήστης χρειάζεται ούτως ή άλλως εγκατεστημένο Chrome + το Selenium
+Manager κατεβάζει chromedriver runtime (δεν πακετάρεται). Προτίμησε SearXNG/DuckDuckGo για το bundle.
 
 ## Γνωστά όρια / μελλοντικά
 

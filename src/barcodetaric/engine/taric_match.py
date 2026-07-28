@@ -36,6 +36,11 @@ class MatchResult:
 _STOPWORDS = {
     "and", "or", "for", "with", "the", "a", "an", "of", "to", "in", "on", "other",
     "και", "με", "σε", "για", "του", "της", "των", "στο", "στη", "στον", "αλλα", "λοιπα",
+    # Μονάδες/ποσότητες & marketing-προσδιορισμοί: ΔΕΝ είναι κριτήρια δασμολογικής κλάσης
+    # και «τραβάνε» σε άσχετες γραμμές (π.χ. «ελαφρύ»->ελαφρό σκυρόδεμα, «φρέσκο»->νωπή ξυλεία).
+    "lt", "ltr", "l", "ml", "cl", "kg", "gr", "gram", "grammar", "γρ", "kgr", "τεμ", "τεμαχια",
+    "pack", "συσκευασια", "τεμαχιο", "φρεσκο", "φρεσκα", "fresh", "ελαφρυ", "ελαφρια", "light",
+    "premium", "νεο", "new", "classic", "original",
 }
 
 
@@ -115,10 +120,17 @@ def _idf() -> dict[str, float]:
     return _IDF
 
 
+# Πλαφόν IDF: χωρίς αυτό, σπάνιοι ΠΡΟΣΔΙΟΡΙΣΜΟΙ (π.χ. «αγελάδος», «παστεριωμένο», «ελαφρύ»)
+# παίρνουν τεράστιο βάρος και «πνίγουν» το βασικό ουσιαστικό (γάλα) — που είναι κοινό άρα χαμηλό
+# IDF. Για ταξινόμηση προϊόντων ο τύπος του προϊόντος μετράει, όχι οι επιθετικοί προσδιορισμοί.
+_IDF_CAP = 5.0
+
+
 def _w(token: str) -> float:
-    """Βάρος token: IDF αν υπάρχει dataset, αλλιώς 1.0 (ουδέτερο)."""
+    """Βάρος token: IDF (με πλαφόν) αν υπάρχει dataset, αλλιώς 1.0 (ουδέτερο)."""
     idf = _idf()
-    return idf.get(token, math.log(1 + _IDF_N) if _IDF_N else 1.0)
+    raw = idf.get(token, math.log(1 + _IDF_N) if _IDF_N else 1.0)
+    return min(raw, _IDF_CAP)
 
 
 def _token_matches(q: str, row_tokens: set[str]) -> bool:
@@ -126,7 +138,9 @@ def _token_matches(q: str, row_tokens: set[str]) -> bool:
         return True
     if len(q) >= 4:
         for r in row_tokens:
-            if len(r) >= 4 and (q.startswith(r) or r.startswith(q)):
+            # Prefix match ΜΟΝΟ όταν τα μήκη είναι κοντά (diff <= 2). Αλλιώς σκέτο brand
+            # όπως «δελτα»(5) ταίριαζε λάθος «δελταμεθρινη»(12) -> γάλα κατατασσόταν ως pesticide.
+            if len(r) >= 4 and abs(len(r) - len(q)) <= 2 and (q.startswith(r) or r.startswith(q)):
                 return True
     return False
 
@@ -145,7 +159,7 @@ def _score(query_tokens: set[str], row) -> float:
     matched = [q for q in query_tokens if _token_matches(q, row_tokens)]
     if not matched:
         return 0.0
-    # IDF-σταθμισμένη κάλυψη του query (σπάνιες λέξεις μετράνε πολύ περισσότερο).
+    # IDF-σταθμισμένη (με πλαφόν) κάλυψη του query.
     matched_w = sum(_w(q) for q in matched)
     query_w = sum(_w(q) for q in query_tokens) or 1.0
     coverage = matched_w / query_w
@@ -154,39 +168,12 @@ def _score(query_tokens: set[str], row) -> float:
     return coverage + 0.1 * brevity
 
 
-# --- Chapter prior (χωρίς AI) -------------------------------------------------
-# Όταν ξέρουμε τη ΦΥΣΗ της πηγής (π.χ. OpenFoodFacts = τρόφιμο/ποτό), μια
-# ομώνυμη λέξη όπως «water» δεν πρέπει να μας στείλει σε «toilet water» (κεφ. 33
-# αρώματα). Δίνουμε bonus στα εύλογα κεφάλαια και ποινή στα απίθανα. Αυτό είναι
-# η δικλείδα ασφαλείας ΟΤΑΝ το AI δεν είναι διαθέσιμο.
-_FOOD_CHAPTERS = {f"{i:02d}" for i in range(1, 25)}         # 01..24 τρόφιμα/ποτά
-_NON_FOOD_TRAP_CHAPTERS = {"33", "34"}                       # αρώματα/καλλυντικά, σαπούνια
-
-
-def _chapter_prior(source: str, categories: str) -> tuple[set[str], set[str]]:
-    """(preferred, penalized) HS2 κεφάλαια από την πηγή/κατηγορίες."""
-    src = (source or "").lower()
-    if "openfoodfacts" in src:
-        return _FOOD_CHAPTERS, _NON_FOOD_TRAP_CHAPTERS
-    return set(), set()
-
-
-def _apply_chapter_prior(score: float, row, preferred: set[str], penalized: set[str]) -> float:
-    if not preferred and not penalized:
-        return score
-    chapter = (getattr(row, "hs4", "") or "")[:2]
-    if chapter and preferred and chapter in preferred:
-        return score * 1.6
-    if chapter and penalized and chapter in penalized:
-        return score * 0.4
-    return score
-
-
-def fts_candidates(description_el: str, description_en: str, *, top: int = 5,
-                   source: str = "", categories: str = "") -> list:
+def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
+                   top: int = 5) -> list:
     query = f"{description_el} {description_en}".strip()
     if not query:
         return []
+<<<<<<< HEAD
     rows = repo.search_taric(query, limit=60)
     qtokens = _tokens(query)
     preferred, penalized = _chapter_prior(source, categories)
@@ -204,11 +191,48 @@ def fts_candidates(description_el: str, description_en: str, *, top: int = 5,
         scored.append((base + rel_bonus, r))
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored[:top]
+=======
+    # Αφαίρεσε τα brand tokens από το scoring (η μάρκα δεν είναι κριτήριο δασμολογικής κλάσης).
+    brand_tokens = _tokens(brand) if brand else set()
+    qtokens = _tokens(query) - brand_tokens
+    if not qtokens:  # αν έμεινε μόνο η μάρκα, ξαναβάλε τα πάντα
+        qtokens = _tokens(query)
+
+    # UNION retrieval: εκτός από το σύνθετο query, ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά.
+    # Το bm25 «θάβει» γενικές επικεφαλίδες (π.χ. 0401 «Γάλα») στο σύνθετο OR-query· η ανά-όρο
+    # αναζήτηση εγγυάται ότι οι γραμμές του βασικού ουσιαστικού (milk/γάλα) μπαίνουν στο pool.
+    seen: dict[str, object] = {}
+    for r in repo.search_taric(query, limit=120):
+        seen[r.code] = r
+    # Ψάξε ΚΑΘΕ σημαντικό token ξεχωριστά — ΚΑΙ το βασικό ουσιαστικό (milk/γάλα), όχι μόνο
+    # τους σπάνιους προσδιορισμούς. Αλλιώς η γενική επικεφαλίδα (0401 Γάλα) δεν μπαίνει καν στο
+    # pool, γιατί το «γάλα» είναι κοινό (χαμηλό IDF) και δεν προλαβαίνει το σύνθετο bm25 query.
+    for tok in list(qtokens)[:12]:
+        for r in repo.search_taric(tok, limit=40):
+            seen.setdefault(r.code, r)
+
+    scored = sorted(
+        ((_score(qtokens, r), r) for r in seen.values()), key=lambda x: x[0], reverse=True
+    )
+    return [(s, r) for s, r in scored if s > 0][:top]
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
+
+
+_FOOD_SOURCES = ("openfoodfacts", "off")
+
+
+def _is_food_source(source: str) -> bool:
+    return any(s in (source or "").lower() for s in _FOOD_SOURCES)
+
+
+def _is_food_chapter(code: str) -> bool:
+    """HS κεφάλαια 01-24 = τρόφιμα/ποτά/ζωικά/φυτικά προϊόντα."""
+    return len(code) >= 2 and code[:2].isdigit() and 1 <= int(code[:2]) <= 24
 
 
 def match(description_el: str, description_en: str = "", *, barcode: str = "",
           brand: str = "", quantity: str = "", categories: str = "",
-          source: str = "", use_ai: bool = True) -> MatchResult:
+          analysis: str = "", source: str = "", use_ai: bool = True) -> MatchResult:
     description_el = (description_el or "").strip()
     description_en = (description_en or "").strip()
 
@@ -237,13 +261,15 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
     # (β) τοπικό ML
     model = get_model()
     if model.is_ready():
-        pred = model.predict(description_el, description_en, barcode, brand, quantity, categories)
+        pred = model.predict(description_el, description_en, barcode, brand, quantity,
+                             categories, analysis)
         if pred and pred.stage == "taric" and pred.code:
             desc = _lookup_taric_desc(pred.code)
             return MatchResult(taric_code=pred.code, hs4=pred.hs4, taric_description=desc,
                                confidence=pred.confidence, taric_source="ml",
                                ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
 
+<<<<<<< HEAD
     # (γ) FTS (λέξεις) + ΕΝΝΟΙΟΛΟΓΙΚΑ embeddings (νόημα) στην ΕΕ ονοματολογία.
     # Τα δύο tiers είναι συμπληρωματικά: το FTS πιάνει ακριβείς όρους, τα embeddings
     # πιάνουν συνώνυμα/παραφράσεις. Τα ενώνουμε ώστε το AI να δει πλουσιότερο σύνολο.
@@ -259,6 +285,23 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
     sem_agrees = bool(sem and (not fts_hs4 or (getattr(sem[0][1], "hs4", "") or "")[:4] in fts_hs4))
 
     cand_dicts = _merge_candidates(cands, sem)
+=======
+    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (χωρίς τη μάρκα ως κριτήριο).
+    # top=8: δίνουμε περισσότερους υποψηφίους στο AI rank ώστε να υπάρχει ο σωστός ακόμη κι όταν
+    # το keyword scoring τον βάζει 3ο-8ο (π.χ. γάλα/καφές κάτω από παρόμοιες γραμμές).
+    cands = fts_candidates(description_el, description_en, brand=brand, top=8)
+    # Chapter prior: αν η πηγή είναι τρόφιμο (π.χ. OpenFoodFacts), προτίμησε κεφάλαια
+    # τροφίμων/ποτών (HS 01-24). Αλλιώς «X water» μπορεί να πέσει σε 3303 (toilet water/άρωμα)
+    # αντί 2201 (μεταλλικό νερό). Αν υπάρχει έστω ένας food υποψήφιος, κρατάμε μόνο τους food.
+    if _is_food_source(source) and cands:
+        food = [(s, r) for s, r in cands if _is_food_chapter(r.code)]
+        if food:
+            cands = food
+    cand_dicts = [{"code": r.code,
+                   "description_el": r.description_path_el or r.description_el,
+                   "description_en": r.description_path_en or r.description_en,
+                   "hs4": r.hs4} for _, r in cands]
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
 
     # (δ) AI rank + rationalization (μόνο αν διαθέσιμο & υπάρχουν υποψήφιοι)
     if use_ai and cand_dicts and ai.ai_available():

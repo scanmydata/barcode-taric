@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
 from .. import repo
 from .widgets import configure_table, h1, muted
 
+_ID_ROLE = Qt.UserRole + 1
+
 
 class CatalogPage(QWidget):
     def __init__(self, parent=None) -> None:
@@ -54,21 +56,31 @@ class CatalogPage(QWidget):
     def reload(self) -> None:
         query = self.search.text().strip()
         items = repo.search_catalog(query) if query else repo.list_catalog()
-        self._ids = [it.id for it in items]
+        self.table.setSortingEnabled(False)   # μη αναδιατάσσεις κατά το γέμισμα
         self.table.setRowCount(len(items))
         for row, it in enumerate(items):
-            self.table.setItem(row, 0, QTableWidgetItem(it.barcode))
+            code_item = QTableWidgetItem(it.barcode)
+            code_item.setData(_ID_ROLE, it.id)   # id στη γραμμή -> ανθεκτικό σε sorting
+            self.table.setItem(row, 0, code_item)
             self.table.setItem(row, 1, QTableWidgetItem(it.description_el))
             self.table.setItem(row, 2, QTableWidgetItem(it.description_en))
             self.table.setItem(row, 3, QTableWidgetItem(it.taric_code))
             self.table.setItem(row, 4, QTableWidgetItem(it.taric_source))
             self.table.setItem(row, 5, QTableWidgetItem("✔" if it.verified else ""))
+        self.table.setSortingEnabled(True)
 
     def delete_selected(self) -> None:
         rows = self.table.selectionModel().selectedRows()
         if not rows:
             return
-        item_id = self._ids[rows[0].row()]
-        if QMessageBox.question(self, "Διαγραφή", "Διαγραφή εγγραφής από τη βάση γνώσης;") == QMessageBox.Yes:
-            repo.delete_catalog_item(item_id)
+        # multi-select: διάγραψε ΟΛΕΣ τις επιλεγμένες εγγραφές
+        ids = [self.table.item(idx.row(), 0).data(_ID_ROLE)
+               for idx in rows if self.table.item(idx.row(), 0) is not None]
+        if not ids:
+            return
+        msg = ("Διαγραφή εγγραφής από τη βάση γνώσης;" if len(ids) == 1
+               else f"Διαγραφή {len(ids)} εγγραφών από τη βάση γνώσης;")
+        if QMessageBox.question(self, "Διαγραφή", msg) == QMessageBox.Yes:
+            for iid in ids:
+                repo.delete_catalog_item(iid)
             self.reload()

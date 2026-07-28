@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
 from .. import repo
 from ..models import Client
 from .client_dialog import ClientDialog
-from .widgets import Card, StatTile, configure_table, h1, h2, muted
+from .widgets import Card, NumericItem, StatTile, configure_table, h1, h2, muted
+
+_ID_ROLE = Qt.UserRole + 1
 
 
 class ClientsPage(QWidget):
@@ -108,26 +110,42 @@ class ClientsPage(QWidget):
     # ------------------------------------------------------------- data ----
     def reload(self) -> None:
         clients = repo.list_clients(self.search.text())
+        # Απενεργοποίηση sorting κατά το γέμισμα: αλλιώς το setItem αναδιατάσσει γραμμές
+        # ενδιάμεσα και μπερδεύει τα δεδομένα.
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(len(clients))
-        self._ids: list[int] = []
+        ids = set()
         for row, c in enumerate(clients):
             stats = repo.client_stats(c.id)
-            self._ids.append(c.id)
-            self.table.setItem(row, 0, QTableWidgetItem(c.name))
+            ids.add(c.id)
+            name_item = QTableWidgetItem(c.name)
+            name_item.setData(_ID_ROLE, c.id)   # id στη γραμμή -> ανθεκτικό σε sort
+            self.table.setItem(row, 0, name_item)
             self.table.setItem(row, 1, QTableWidgetItem(c.vat))
-            self.table.setItem(row, 2, QTableWidgetItem(str(stats["total"])))
-            self.table.setItem(row, 3, QTableWidgetItem(str(stats["matched"])))
-        if clients and self._current_id in self._ids:
-            self.table.selectRow(self._ids.index(self._current_id))
+            self.table.setItem(row, 2, NumericItem(stats["total"]))
+            self.table.setItem(row, 3, NumericItem(stats["matched"]))
+        self.table.setSortingEnabled(True)
+        if clients and self._current_id in ids:
+            self._select_row_by_id(self._current_id)
         elif not clients:
             self._current_id = None
             self._update_panel(None)
+
+    def _select_row_by_id(self, client_id: int) -> None:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(_ID_ROLE) == client_id:
+                self.table.selectRow(row)
+                return
 
     def _on_select(self) -> None:
         rows = self.table.selectionModel().selectedRows()
         if not rows:
             return
-        self._current_id = self._ids[rows[0].row()]
+        item = self.table.item(rows[0].row(), 0)
+        if item is None:
+            return
+        self._current_id = item.data(_ID_ROLE)
         self._update_panel(self._current_id)
 
     def _update_panel(self, client_id: int | None) -> None:

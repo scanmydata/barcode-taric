@@ -1,0 +1,32 @@
+{
+  "theme": "dark",
+  "ai_provider_order": [
+    "openrouter",
+    "custom",
+    "duckduckgo",
+    "pollinations"
+  ],
+  "openrouter_model": "openai/gpt-oss-20b:free",
+  "openrouter_api_key": "",
+  "custom_ai_base_url": "https://abc.trycloudflare.com/v1",
+  "custom_ai_model": "qwen2.5:7b",
+  "custom_ai_api_key": "",
+  "custom_ai_timeout": 120.0,
+  "google_cse_api_key": "",
+  "google_cse_id": "",
+  "searxng_url": "http://127.0.0.1:8888",
+  "chrome_binary": "",
+  "headless_headed": true,
+  "web_search_order": [
+    "searxng",
+    "duckduckgo",
+    "headless"
+  ],
+  "ml_confidence_threshold": 0.55,
+  "ml_min_samples": 40,
+  "ml_autoretrain_every": 25,
+  "auto_update_taric": true,
+  "business_portal_key": "",
+  "groq_api_key": "",
+  "groq_enabled": false
+}

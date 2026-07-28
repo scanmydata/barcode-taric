@@ -37,6 +37,7 @@ class CatalogItem:
     brand: str = ""          # λεπτομέρειες προϊόντος (για matching/training)
     quantity: str = ""       # μέγεθος/ποσότητα (π.χ. 360g)
     categories: str = ""     # κατηγορίες/τύπος προϊόντος
+    analysis: str = ""       # δομημένη «ανάλυση» (υλικό/τύπος/χρήση) για tariff + ML training
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -60,6 +61,7 @@ class ClientItem:
     brand: str = ""
     quantity: str = ""
     categories: str = ""
+    analysis: str = ""       # δομημένη «ανάλυση» (υλικό/τύπος/χρήση) για tariff + ML training
     catalog_id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLineEdit, QPushButton,
     QTextEdit, QVBoxLayout, QWidget,
@@ -28,6 +30,9 @@ class ClientDialog(QDialog):
 
         self.name = QLineEdit(self._client.name)
         self.vat = QLineEdit(self._client.vat)
+        self.vat.setPlaceholderText("9 ψηφία — αυτόματη άντληση στοιχείων")
+        self.vat.setMaxLength(9)
+        self.vat.setValidator(QIntValidator(0, 999999999, self))
         self.email = QLineEdit(self._client.email)
         self.phone = QLineEdit(self._client.phone)
         self.address = QLineEdit(self._client.address)
@@ -47,6 +52,15 @@ class ClientDialog(QDialog):
         # Αυτόματη άντληση μόλις συμπληρωθεί έγκυρος 9ψήφιος ΑΦΜ (χωρίς πάτημα κουμπιού).
         self.vat.textChanged.connect(self._on_vat_changed)
 
+        # Αυτόματη άντληση μόλις συμπληρωθεί έγκυρος 9ψήφιος ΑΦΜ (με debounce
+        # ώστε να μην πυροδοτείται σε κάθε πάτημα πλήκτρου).
+        self._last_afm = ""
+        self._afm_timer = QTimer(self)
+        self._afm_timer.setSingleShot(True)
+        self._afm_timer.setInterval(500)
+        self._afm_timer.timeout.connect(self._maybe_auto_fetch)
+        self.vat.textChanged.connect(lambda _t: self._afm_timer.start())
+
         form.addRow("Επωνυμία *", self.name)
         form.addRow("ΑΦΜ", vat_row)
         form.addRow("Email", self.email)
@@ -62,6 +76,7 @@ class ClientDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+<<<<<<< HEAD
     def _on_vat_changed(self, text: str) -> None:
         """Auto-trigger: μόλις το ΑΦΜ φτάσει ακριβώς 9 ψηφία, άντλησε αυτόματα."""
         import re
@@ -81,6 +96,24 @@ class ClientDialog(QDialog):
             return
         self._fetching = True
         self._last_afm = digits
+=======
+    def _maybe_auto_fetch(self) -> None:
+        """Πυροδοτείται (debounced) μόλις ο ΑΦΜ γίνει έγκυρος 9ψήφιος αριθμός."""
+        afm = self.vat.text().strip()
+        if len(afm) == 9 and afm.isdigit() and afm != self._last_afm:
+            self._start_lookup(afm, silent=True)
+
+    def _fetch_from_vat(self) -> None:
+        afm = self.vat.text().strip()
+        if not afm:
+            self.vat.setFocus()
+            return
+        self._start_lookup(afm, silent=False)
+
+    def _start_lookup(self, afm: str, *, silent: bool) -> None:
+        self._last_afm = afm
+        self._silent_lookup = silent   # στην αυτόματη άντληση δεν δείχνουμε popup σε αποτυχία
+>>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         self.fetch_btn.setEnabled(False)
         self.fetch_btn.setText("Άντληση…")
         run_async(self, business_lookup.lookup_by_afm, digits,
@@ -90,8 +123,9 @@ class ClientDialog(QDialog):
         self._reset_fetch()
         from PySide6.QtWidgets import QMessageBox
         if not result.get("success"):
-            QMessageBox.information(self, "Άντληση από ΑΦΜ",
-                                    result.get("error") or "Δεν βρέθηκαν στοιχεία.")
+            if not getattr(self, "_silent_lookup", False):
+                QMessageBox.information(self, "Άντληση από ΑΦΜ",
+                                        result.get("error") or "Δεν βρέθηκαν στοιχεία.")
             return
         c = result["company"]
         if c.get("name"):

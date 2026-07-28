@@ -29,24 +29,33 @@ class MLPrediction:
 
 
 def _feature_text(description_el: str, description_en: str, barcode: str = "",
-                  brand: str = "", quantity: str = "", categories: str = "") -> str:
+                  brand: str = "", quantity: str = "", categories: str = "",
+                  analysis: str = "") -> str:
     prefix = re.sub(r"\D", "", barcode)[:7]  # GS1 prefix ~ χώρα/κατασκευαστής
     return " ".join(p for p in (
-        description_el, description_en, brand, quantity, categories,
+        description_el, description_en, brand, quantity, categories, analysis,
         f"gs1_{prefix}" if prefix else "",
     ) if p)
 
 
 def _build_pipeline():
+    """TF-IDF word (1-2gram) + char_wb (3-5gram) -> LogisticRegression.
+
+    Το char_wb πιάνει υπο-λέξη μορφολογία (ελληνικές κλίσεις: γάλα/γάλακτος, ορθογραφικά
+    λάθη, brand παραλλαγές) που το word-only έχανε — γι' αυτό βελτιώνει σε σύντομες,
+    πολύγλωσσες περιγραφές προϊόντων. (Έρευνα: sentence-embeddings δίνουν +7-25% αλλά
+    είναι βαριά εξάρτηση· βλ. README «Μελλοντικά».)
+    """
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.linear_model import LogisticRegression
-    from sklearn.pipeline import Pipeline
+    from sklearn.pipeline import FeatureUnion, Pipeline
 
+    word = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), min_df=1, sublinear_tf=True,
+                           lowercase=True, strip_accents="unicode")
+    char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=1, sublinear_tf=True,
+                           lowercase=True, strip_accents="unicode")
     return Pipeline([
-        ("tfidf", TfidfVectorizer(
-            analyzer="word", ngram_range=(1, 2), min_df=1, sublinear_tf=True,
-            lowercase=True, strip_accents="unicode",
-        )),
+        ("feats", FeatureUnion([("word", word), ("char", char)])),
         ("clf", LogisticRegression(max_iter=1000, C=4.0, class_weight="balanced")),
     ])
 
@@ -76,7 +85,7 @@ class TaricML:
             texts.append(_feature_text(
                 r.get("description_el") or "", r.get("description_en") or "",
                 r.get("barcode") or "", r.get("brand") or "", r.get("quantity") or "",
-                r.get("categories") or ""))
+                r.get("categories") or "", r.get("analysis") or ""))
             taric_labels.append(code)
             hs4_labels.append((r.get("hs4") or code[:4]).strip())
 
@@ -105,8 +114,9 @@ class TaricML:
 
         result["cv_accuracy"] = self._cross_val(texts, taric_labels)
         self.save()
-        repo.set_ml_meta(model_version="tfidf-logreg-v1", n_samples=self.n_samples,
-                         cv_accuracy=result.get("cv_accuracy", 0.0), algo="TF-IDF + LogisticRegression")
+        repo.set_ml_meta(model_version="tfidf-wordchar-logreg-v2", n_samples=self.n_samples,
+                         cv_accuracy=result.get("cv_accuracy", 0.0),
+                         algo="TF-IDF (word+char) + LogisticRegression")
         return result
 
     def _cross_val(self, texts: list[str], labels: list[str]) -> float:
@@ -124,10 +134,12 @@ class TaricML:
 
     # ------------------------------------------------------------- predict ----
     def predict(self, description_el: str, description_en: str = "", barcode: str = "",
-                brand: str = "", quantity: str = "", categories: str = "") -> Optional[MLPrediction]:
+                brand: str = "", quantity: str = "", categories: str = "",
+                analysis: str = "") -> Optional[MLPrediction]:
         if self.taric_model is None and self.hs4_model is None:
             return None
-        text = _feature_text(description_el, description_en, barcode, brand, quantity, categories)
+        text = _feature_text(description_el, description_en, barcode, brand, quantity,
+                             categories, analysis)
         if not text.strip():
             return None
         threshold = float(SETTINGS.get("ml_confidence_threshold", 0.55))
