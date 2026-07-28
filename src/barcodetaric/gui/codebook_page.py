@@ -171,7 +171,8 @@ class CodebookPage(QWidget):
             description_en=res.description_en, taric_code=res.taric_code, hs4=res.hs4,
             taric_description=res.taric_description, confidence=res.confidence,
             ai_rationale=res.ai_rationale, taric_source=res.taric_source, source=res.source,
-            brand=res.brand, quantity=res.quantity, categories=res.categories, catalog_id=cat_id,
+            brand=res.brand, quantity=res.quantity, categories=res.categories,
+            analysis=res.analysis, catalog_id=cat_id,
         )
         repo.upsert_client_item(item)
         self.status.setText(
@@ -362,7 +363,8 @@ def _upsert_catalog(res: resolve.ResolveResult) -> int | None:
         barcode=res.barcode, description_el=res.description_el, description_en=res.description_en,
         taric_code=res.taric_code, hs4=res.hs4, taric_description=res.taric_description,
         confidence=res.confidence, ai_rationale=res.ai_rationale, taric_source=res.taric_source,
-        source=res.source, brand=res.brand, quantity=res.quantity, categories=res.categories))
+        source=res.source, brand=res.brand, quantity=res.quantity, categories=res.categories,
+        analysis=res.analysis))
 
 
 def _match_single_job(item_id: int, progress=None) -> bool:

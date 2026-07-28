@@ -134,11 +134,12 @@ def upsert_catalog(item: CatalogItem) -> int:
             conn.execute(
                 """UPDATE catalog SET description_el=?, description_en=?, taric_code=?, hs4=?,
                    taric_description=?, confidence=?, ai_rationale=?, taric_source=?, verified=?,
-                   source=?, brand=?, quantity=?, categories=?,
+                   source=?, brand=?, quantity=?, categories=?, analysis=?,
                    updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (item.description_el, item.description_en, item.taric_code, item.hs4,
                  item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
-                 item.verified, item.source, item.brand, item.quantity, item.categories, cid),
+                 item.verified, item.source, item.brand, item.quantity, item.categories,
+                 item.analysis, cid),
             )
             _fts_upsert(conn, "catalog_fts", cid,
                         _fold(item.description_el, item.description_en, item.barcode, item.categories))
@@ -146,11 +147,12 @@ def upsert_catalog(item: CatalogItem) -> int:
         cur = conn.execute(
             """INSERT INTO catalog (barcode, description_el, description_en, taric_code, hs4,
                taric_description, confidence, ai_rationale, taric_source, verified, source,
-               brand, quantity, categories)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               brand, quantity, categories, analysis)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (item.barcode, item.description_el, item.description_en, item.taric_code, item.hs4,
              item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
-             item.verified, item.source, item.brand, item.quantity, item.categories),
+             item.verified, item.source, item.brand, item.quantity, item.categories,
+             item.analysis),
         )
         cid = int(cur.lastrowid)
         _fts_upsert(conn, "catalog_fts", cid,
@@ -200,11 +202,12 @@ def update_catalog_item(item: CatalogItem) -> bool:
         cur = conn.execute(
             """UPDATE catalog SET barcode=?, description_el=?, description_en=?, taric_code=?,
                hs4=?, taric_description=?, confidence=?, ai_rationale=?, taric_source=?,
-               verified=?, source=?, brand=?, quantity=?, categories=?,
+               verified=?, source=?, brand=?, quantity=?, categories=?, analysis=?,
                updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (item.barcode, item.description_el, item.description_en, item.taric_code, item.hs4,
              item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
-             item.verified, item.source, item.brand, item.quantity, item.categories, item.id),
+             item.verified, item.source, item.brand, item.quantity, item.categories,
+             item.analysis, item.id),
         )
         if cur.rowcount > 0:
             _fts_upsert(conn, "catalog_fts", int(item.id),
@@ -231,6 +234,7 @@ def _row_to_catalog(row: sqlite3.Row) -> CatalogItem:
         brand=(row["brand"] if "brand" in keys else "") or "",
         quantity=(row["quantity"] if "quantity" in keys else "") or "",
         categories=(row["categories"] if "categories" in keys else "") or "",
+        analysis=(row["analysis"] if "analysis" in keys else "") or "",
         created_at=row["created_at"], updated_at=row["updated_at"],
     )
 
@@ -249,23 +253,23 @@ def upsert_client_item(item: ClientItem) -> int:
             conn.execute(
                 """UPDATE client_items SET description_el=?, description_en=?, taric_code=?, hs4=?,
                    taric_description=?, confidence=?, ai_rationale=?, taric_source=?, verified=?,
-                   source=?, brand=?, quantity=?, categories=?, catalog_id=?,
+                   source=?, brand=?, quantity=?, categories=?, analysis=?, catalog_id=?,
                    updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 (item.description_el, item.description_en, item.taric_code, item.hs4,
                  item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
                  item.verified, item.source, item.brand, item.quantity, item.categories,
-                 item.catalog_id, iid),
+                 item.analysis, item.catalog_id, iid),
             )
             return iid
         cur = conn.execute(
             """INSERT INTO client_items (client_id, barcode, description_el, description_en,
                taric_code, hs4, taric_description, confidence, ai_rationale, taric_source,
-               verified, source, brand, quantity, categories, catalog_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               verified, source, brand, quantity, categories, analysis, catalog_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (item.client_id, item.barcode, item.description_el, item.description_en,
              item.taric_code, item.hs4, item.taric_description, item.confidence,
              item.ai_rationale, item.taric_source, item.verified, item.source,
-             item.brand, item.quantity, item.categories, item.catalog_id),
+             item.brand, item.quantity, item.categories, item.analysis, item.catalog_id),
         )
         return int(cur.lastrowid)
 
@@ -291,12 +295,12 @@ def update_client_item(item: ClientItem) -> bool:
         cur = conn.execute(
             """UPDATE client_items SET barcode=?, description_el=?, description_en=?, taric_code=?,
                hs4=?, taric_description=?, confidence=?, ai_rationale=?, taric_source=?,
-               verified=?, source=?, brand=?, quantity=?, categories=?, catalog_id=?,
+               verified=?, source=?, brand=?, quantity=?, categories=?, analysis=?, catalog_id=?,
                updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (item.barcode, item.description_el, item.description_en, item.taric_code, item.hs4,
              item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
              item.verified, item.source, item.brand, item.quantity, item.categories,
-             item.catalog_id, item.id),
+             item.analysis, item.catalog_id, item.id),
         )
         return cur.rowcount > 0
 
@@ -327,6 +331,7 @@ def _row_to_client_item(row: sqlite3.Row) -> ClientItem:
         brand=(row["brand"] if "brand" in keys else "") or "",
         quantity=(row["quantity"] if "quantity" in keys else "") or "",
         categories=(row["categories"] if "categories" in keys else "") or "",
+        analysis=(row["analysis"] if "analysis" in keys else "") or "",
         catalog_id=row["catalog_id"], created_at=row["created_at"], updated_at=row["updated_at"],
     )
 
@@ -341,11 +346,11 @@ def verified_training_rows() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             """SELECT description_el, description_en, barcode, brand, quantity, categories,
-                      taric_code, hs4
+                      analysis, taric_code, hs4
                FROM client_items WHERE verified=1 AND taric_code IS NOT NULL AND taric_code != ''
                UNION ALL
                SELECT description_el, description_en, barcode, brand, quantity, categories,
-                      taric_code, hs4
+                      analysis, taric_code, hs4
                FROM catalog WHERE verified=1 AND taric_code IS NOT NULL AND taric_code != ''"""
         ).fetchall()
         return [dict(r) for r in rows]

@@ -26,6 +26,7 @@ class ResolveResult:
     found: bool = False
     is_product: bool = True           # false = υπηρεσία/άυλο -> χωρίς TARIC
     customs_hint: str = ""            # εσωτερικό: είδος/υλικό για matching (δεν εμφανίζεται)
+    analysis: str = ""                # δομημένη «ανάλυση» (hint+κατηγορίες+μάρκα+ποσότητα) -> tariff + ML
     candidates: list = field(default_factory=list)
 
 
@@ -169,11 +170,15 @@ def _apply_match(result: ResolveResult, *, use_ai: bool) -> None:
     # Στην κατάταξη δίνουμε ΟΝΟΜΑΣΙΑ + customs_hint (είδος/υλικό) + κατηγορίες:
     # το hint ξεχωρίζει π.χ. «μεταλλικό νερό» (2201) από «toilet water» (3303).
     hint = result.customs_hint
+    # Δομημένη «ανάλυση» προϊόντος (αποθηκεύεται πίσω από την περιγραφή): υλικό/τύπος (hint) +
+    # κατηγορίες + μάρκα + ποσότητα. Χρησιμεύει για ακριβέστερη κατάταξη ΚΑΙ ως ML feature.
+    result.analysis = " · ".join(p for p in (
+        hint, result.categories, result.brand, result.quantity) if p)
     el = " ".join(p for p in (result.description_el, hint, result.categories) if p).strip()
     en = " ".join(p for p in (result.description_en, hint, result.categories) if p).strip()
     m = taric_match.match(el, en, barcode=result.barcode, brand=result.brand,
                           quantity=result.quantity, categories=result.categories,
-                          source=result.source, use_ai=use_ai)
+                          analysis=result.analysis, source=result.source, use_ai=use_ai)
     result.taric_code = m.taric_code
     result.hs4 = m.hs4
     result.taric_description = m.taric_description

@@ -174,7 +174,7 @@ def _is_food_chapter(code: str) -> bool:
 
 def match(description_el: str, description_en: str = "", *, barcode: str = "",
           brand: str = "", quantity: str = "", categories: str = "",
-          source: str = "", use_ai: bool = True) -> MatchResult:
+          analysis: str = "", source: str = "", use_ai: bool = True) -> MatchResult:
     description_el = (description_el or "").strip()
     description_en = (description_en or "").strip()
     combined = f"{description_el} {description_en}".strip()
@@ -190,7 +190,8 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
     # (β) τοπικό ML
     model = get_model()
     if model.is_ready():
-        pred = model.predict(description_el, description_en, barcode, brand, quantity, categories)
+        pred = model.predict(description_el, description_en, barcode, brand, quantity,
+                             categories, analysis)
         if pred and pred.stage == "taric" and pred.code:
             desc = _lookup_taric_desc(pred.code)
             return MatchResult(taric_code=pred.code, hs4=pred.hs4, taric_description=desc,

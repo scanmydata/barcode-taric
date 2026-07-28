@@ -148,7 +148,11 @@ AI enrichment (αναλυτική περιγραφή με μέγεθος) → ma
 
 ## ML (scikit-learn, τοπικό, δωρεάν)
 
-- Features: `description_el + description_en + gs1_<barcode-prefix>` → TF-IDF (word 1-2grams).
+- Features: `description_el/en + brand + quantity + categories + analysis + gs1_<prefix>` →
+  **TF-IDF word(1-2) + char_wb(3-5)** (FeatureUnion) → LogisticRegression. Τα char n-grams
+  πιάνουν ελληνική μορφολογία/brand παραλλαγές. Το πεδίο `analysis` (υλικό/τύπος/κατηγορίες/
+  μάρκα/ποσότητα) αποθηκεύεται στη βάση (catalog/client_items) και τροφοδοτεί ΚΑΙ το matching
+  ΚΑΙ το ML. Μελλοντικά: sentence-embeddings ως optional extra (ίδιο interface· βλ. README).
 - Δύο μοντέλα: πλήρες TARIC code + HS4 heading. Χαμηλή βεβαιότητα στο πλήρες → πέφτει στο HS4.
 - Εκπαίδευση από `repo.verified_training_rows()` (verified=1 σε client_items ∪ catalog). Απαιτεί
   `ml_min_samples` (default 40· στα tests μειώνεται). Persistence: `model.joblib` στο data-dir + `ml_meta`.

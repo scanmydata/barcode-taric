@@ -134,6 +134,33 @@ def test_web_context_query_uses_name_brand_category(monkeypatch):
     assert "hazelnut" in seen["q"].lower()
 
 
+def test_analysis_field_roundtrip():
+    """Το πεδίο analysis (δομημένη ανάλυση προϊόντος) πρέπει να αποθηκεύεται & να διαβάζεται."""
+    from barcodetaric import repo
+    from barcodetaric.models import Client, ClientItem, CatalogItem
+    cid = repo.create_client(Client(name="ML-Test Πελάτης"))
+    item = ClientItem(client_id=cid, barcode="5200000000009", description_el="γάλα",
+                      taric_code="0401100000", analysis="υγρό γαλακτοκομικό · αγελάδος · 1lt")
+    iid = repo.upsert_client_item(item)
+    got = repo.get_client_item(iid)
+    assert got is not None and got.analysis == "υγρό γαλακτοκομικό · αγελάδος · 1lt"
+    # catalog επίσης
+    cat_id = repo.upsert_catalog(CatalogItem(barcode="5200000000016", description_el="καφές",
+                                             taric_code="0901210000", analysis="κόκκοι καφέ · αλεσμένος"))
+    assert repo.get_catalog_by_barcode("5200000000016").analysis == "κόκκοι καφέ · αλεσμένος"
+
+
+def test_ml_feature_text_and_pipeline_include_analysis_and_char():
+    from barcodetaric.engine import ml_classifier as ml
+    txt = ml._feature_text("γάλα", "milk", "520", "Δέλτα", "1lt", "dairy", "υγρό γαλακτοκομικό")
+    assert "υγρό γαλακτοκομικό" in txt
+    # το pipeline πρέπει να έχει ΚΑΙ char analyzer (word+char n-grams)
+    pytest.importorskip("sklearn")
+    pipe = ml._build_pipeline()
+    analyzers = [v.analyzer for _, v in pipe.named_steps["feats"].transformer_list]
+    assert "word" in analyzers and "char_wb" in analyzers
+
+
 def test_food_source_chapter_prior(monkeypatch):
     """Πηγή τροφίμου (OpenFoodFacts) πρέπει να στρέφει την κατάταξη σε κεφάλαια 01-24
     (π.χ. «water» -> 2201 μεταλλικό νερό, ΟΧΙ 3303 άρωμα)."""

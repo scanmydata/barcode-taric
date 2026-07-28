@@ -134,6 +134,44 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 [Combined Nomenclature](https://data.europa.eu/data/datasets/combined-nomenclature-2026)
 (ετήσιο, πολύγλωσσο με Ελληνικά). Ο importer δέχεται XML/CSV/XLSX/ZIP από αρχείο ή URL.
 
+## Μηχανική μάθηση (τοπικό, δωρεάν, offline)
+
+Το `ml_classifier.py` μαθαίνει από τα **επιβεβαιωμένα** (✔) είδη και αναλαμβάνει όλο και
+περισσότερες αποφάσεις χωρίς κλήση AI. Τρέχουσα προσέγγιση (v2):
+
+- **TF-IDF word (1-2gram) + char_wb (3-5gram)** → LogisticRegression, δύο στάδια (πλήρες TARIC →
+  fallback σε HS4). Τα **char n-grams** πιάνουν ελληνική μορφολογία (γάλα/γάλακτος), ορθογραφικά
+  λάθη και παραλλαγές μάρκας — που το word-only έχανε.
+- **Δομημένη «ανάλυση» προϊόντος** (`analysis`): πίσω από την περιγραφή αποθηκεύεται υλικό/τύπος
+  (customs_hint) + κατηγορίες + μάρκα + ποσότητα, στη βάση (στήλες `catalog.analysis`,
+  `client_items.analysis`). Χρησιμοποιείται **και** ως feature του ML **και** για ακριβέστερη
+  κατάταξη — χωρίς επιπλέον κλήση AI.
+
+### Ποιο είναι το «καλύτερο» μοντέλο; (έρευνα)
+
+- **LLM fine-tuning** (π.χ. Atlas / LLaMA-3.3-70B) δίνει την υψηλότερη ακρίβεια αλλά είναι βαρύ/
+  ακριβό — δεν ταιριάζει σε δωρεάν, offline, ελαφρύ desktop.
+- **Multilingual sentence-embeddings** (SBERT, π.χ. `paraphrase-multilingual-MiniLM-L12-v2`)
+  δίνουν **+7–25%** έναντι TF-IDF+SVM και λύνουν σημασιολογικά κείμενα («Στάμου γάλα αγελάδος»
+  → γάλα 0401) — **αλλά** φέρνουν βαριά εξάρτηση (torch, ~εκατοντάδες MB) που χαλάει τον
+  ελαφρύ installer. Γι' αυτό μπαίνει ως **μελλοντικό optional extra** με το ΙΔΙΟ interface
+  (`get_model().predict(...)`), όχι στο default bundle.
+
+Πηγές έρευνας: [ATLAS (arXiv 2509.18400)](https://arxiv.org/html/2509.18400v1) ·
+[HS code AI guide 2025](https://www.xnovainternational.com/post/hs-code-a-practical-guide-to-automatic-classification-with-ai-2025) ·
+[TF-IDF vs Sentence Transformers](https://medium.com/@venugopal.adep/comparative-study-of-text-embeddings-tf-idf-vs-sentence-transformer-28627c315f21)
+
+## Εκκρεμή / Μελλοντικά
+
+- **Semantic ML backend (sentence-embeddings)** ως optional extra `.[semantic]` — το πραγματικό
+  fix για ασαφείς ελληνικές περιγραφές (π.χ. «Στάμου γάλα αγελάδος»). Interface έτοιμο· δεν
+  υλοποιήθηκε ακόμη για να μη βαρύνει ο installer.
+- **Πλουσιότερη AI «ανάλυση»**: τώρα η `analysis` συντίθεται από hint+κατηγορίες+μάρκα+ποσότητα
+  (χωρίς επιπλέον κλήση, για ταχύτητα). Μια αναλυτική AI ανάλυση σύστασης/υλικών θα βοηθούσε
+  ακόμη περισσότερο αλλά προσθέτει κόστος/χρόνο — αφέθηκε ως επιλογή.
+- **Speed:** το resolve κάνει 2 AI κλήσεις (confirm_product + rank_taric) + web· όταν ωριμάσει το
+  ML tier, οι AI κλήσεις πέφτουν αυτόματα.
+
 ## Tests
 
 ```bash
