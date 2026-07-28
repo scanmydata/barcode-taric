@@ -17,6 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["pyside6>=6.6"]
 crypto = ["cryptography>=41.0"]
+# Τοπικά (offline) πολύγλωσσα embeddings για εννοιολογική αντιστοίχιση TARIC.
+semantic = ["sentence-transformers>=2.6", "numpy>=1.24"]
 
 [project.scripts]
 barcodetaric = "barcodetaric.cli:main"

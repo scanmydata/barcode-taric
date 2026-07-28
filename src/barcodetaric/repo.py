@@ -433,6 +433,22 @@ def iter_taric_texts() -> list[str]:
         return [f"{r['el'] or ''} {r['en'] or ''}" for r in rows]
 
 
+def all_taric_rows() -> list[TaricRow]:
+    """Όλες οι γραμμές της ονοματολογίας ως TaricRow — για build embeddings."""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM taric_nomenclature ORDER BY id").fetchall()
+        return [_row_to_taric(r) for r in rows]
+
+
+def get_taric_row(code: str) -> Optional[TaricRow]:
+    """Μία γραμμή ονοματολογίας με ακριβή κωδικό (για retrieval μετά το embedding search)."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM taric_nomenclature WHERE code=? LIMIT 1", (code,)
+        ).fetchone()
+        return _row_to_taric(row) if row else None
+
+
 def _row_to_taric(row: sqlite3.Row) -> TaricRow:
     keys = row.keys()
     return TaricRow(

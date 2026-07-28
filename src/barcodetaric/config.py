@@ -25,9 +25,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # OpenRouter πρώτο (δωρεάν :free μοντέλα με key). Το Groq μένει ως επιλογή αλλά
     # θέλει login/κλειδί που δεν είναι πάντα διαθέσιμο. Τα no-key (pollinations/
     # duckduckgo) χρεώνουν/περιορίζονται πλέον (402/429) — έσχατο fallback.
-    "ai_provider_order": ["openrouter", "groq", "duckduckgo", "pollinations"],
+    "ai_provider_order": ["custom", "openrouter", "groq", "duckduckgo", "pollinations"],
     "openrouter_model": "meta-llama/llama-3.3-70b-instruct:free",
     "openrouter_api_key": "",
+    # Custom OpenAI-compatible endpoint (π.χ. τοπικό ollama μέσω cloudflare tunnel).
+    # Δηλώνεις μόνο το URL (base ή πλήρες /v1/chat/completions)· key προαιρετικό.
+    "custom_ai_url": "",
+    "custom_ai_key": "",
+    "custom_ai_model": "llama3.1",
     "google_cse_api_key": "",
     "google_cse_id": "",
     # OpenSERP: τοπικός server (headless browser) για πραγματικά Google αποτελέσματα
@@ -35,7 +40,31 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "openserp_url": "http://127.0.0.1:7000",
     "openserp_engine": "google",
     "openserp_timeout": 45,      # ο headless browser είναι αργός στο πρώτο query
-    "web_search_order": ["openserp", "googlesearch", "google_cse", "duckduckgo"],
+    # SearXNG: self-hosted μετα-μηχανή (πολλές μηχανές μαζί, χωρίς key). Ιδανικό στο
+    # μηχάνημα του τοπικού LLM. Απαιτεί `format: json` στο settings.yml του SearXNG.
+    "searxng_url": "",
+    "searxng_timeout": 15,
+    # Σειρά web tiers. Το googlesearch-python είναι ΑΡΓΟ & rate-limited (κάνει sleep
+    # μεταξύ requests) — γι' αυτό ΔΕΝ είναι πρώτο. Προτεραιότητα: SearXNG -> OpenSERP
+    # (headless browser) -> Brave (επίσημο API) -> Google CSE -> DuckDuckGo ->
+    # googlesearch (έσχατο, αργό).
+    "web_search_order": ["searxng", "openserp", "brave", "google_cse", "duckduckgo", "googlesearch"],
+    # Δωρεάν διαδικτυακή μετάφραση EL<->EN ΧΩΡΙΣ LLM. Το MyMemory (χωρίς key) έχει
+    # μνήμη ΕΕ/ΟΗΕ — ιδανικό για τελωνειακό λεξιλόγιο. Με email ανεβαίνει το όριο.
+    "translation_provider_order": ["mymemory", "libretranslate"],
+    "mymemory_email": "",           # προαιρετικό: 5000 -> 50000 chars/μέρα
+    "libretranslate_url": "",       # προαιρετικό self-hosted/public instance
+    "libretranslate_api_key": "",
+    # Βασική γλώσσα κατάταξης: τα αγγλικά δίνουν καλύτερα αποτελέσματα (η ΕΕ CN/HS
+    # ονοματολογία είναι τυποποιημένη στα αγγλικά). Μεταφράζουμε το query σε EN.
+    "classify_in_english": True,
+    "brave_api_key": "",            # Brave Search API (2000 δωρεάν queries/μήνα)
+    "ocrspace_api_key": "",         # ocr.space free tier (OCR ετικέτας από φωτό προϊόντος)
+    # Τοπικά (offline) πολύγλωσσα embeddings για ΕΝΝΟΙΟΛΟΓΙΚΗ αντιστοίχιση (νόημα, όχι
+    # μόνο λέξεις). Θέλει `pip install -e ".[semantic]"` (sentence-transformers). Αν
+    # λείπει, το tier παρακάμπτεται σιωπηλά.
+    "semantic_enabled": True,
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,

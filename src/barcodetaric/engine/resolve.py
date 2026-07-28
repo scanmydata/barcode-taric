@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import ai, barcode_sources, taric_match, translate, web_search
+from . import ai, barcode_sources, ocr, taric_match, translate, web_search
 
 
 @dataclass
@@ -73,6 +73,16 @@ def resolve_barcode(barcode: str, *, use_ai: bool = True, do_match: bool = True)
     quantity = str(info.get("quantity") or "").strip()
     raw_desc = info.get("description") or ""
 
+    # OCR ετικέτας: αν δεν έχουμε αξιόπιστη ονομασία αλλά υπάρχει φωτό προϊόντος,
+    # διαβάζουμε το κείμενο της ετικέτας για να αναγνωρίσουμε ΤΙ είναι το προϊόν.
+    if not name and info.get("image_url") and ocr.available():
+        ocr_text = ocr.ocr_image_url(info["image_url"])
+        if ocr_text:
+            raw_desc = f"{raw_desc} {ocr_text}".strip()
+            if not name:
+                name = translate.sanitize_name(ocr_text, brand=brand, description=raw_desc,
+                                               categories=categories)
+
     result = ResolveResult(
         barcode=normalized, brand=brand, quantity=quantity, categories=categories,
         source=info.get("source", ""), found=bool(info.get("found")),
@@ -102,9 +112,9 @@ def _fill_bilingual(el: str, en: str) -> tuple[str, str]:
     """Εξασφαλίζει ότι υπάρχουν και οι δύο γλώσσες (μεταφράζει ό,τι λείπει)."""
     el, en = (el or "").strip(), (en or "").strip()
     if el and not en:
-        en = ai.translate(el, target="en") or el
+        en = translate.translate_text(el, target="en") or el
     elif en and not el:
-        el = ai.translate(en, target="el") or en
+        el = translate.translate_text(en, target="el") or en
     return el, en
 
 
@@ -115,13 +125,30 @@ def _confirm_identity(result: ResolveResult, *, candidate_name: str, candidate_d
     Ψάχνει ΤΑΥΤΟΧΡΟΝΑ για το barcode και για την ονομασία/περιγραφή, και «κλειδώνει»
     ονομασία EL/EN (name-only), is_product και customs_hint. Χρησιμοποιείται και από
     το barcode και από το description path. Επιστρέφει True αν επιβεβαίωσε το AI.
+
+    ΠΑΝΤΑ διασταυρώνει με web αποτελέσματα: ακόμη κι αν το AI δεν είναι διαθέσιμο,
+    τρέχει web search και επιβεβαιώνει την υποψήφια ονομασία (corroboration score),
+    ώστε να μη κατατάσσουμε «junk»/αστήρικτη ονομασία.
     """
-    if not (use_ai and ai.ai_available()):
-        return False
-    web = web_search.gather_context(barcode=result.barcode, name=candidate_name or candidate_description,
+    name_or_desc = candidate_name or candidate_description
+    web = web_search.gather_context(barcode=result.barcode, name=name_or_desc,
                                     brand=brand, limit=5)
-    if web.get("barcode_hits") or web.get("name_hits"):
+    hits = (web.get("barcode_hits") or []) + (web.get("name_hits") or [])
+    if hits:
         result.found = True
+
+    # --- Μονοπάτι ΧΩΡΙΣ AI: web-only corroboration -----------------------------
+    if not (use_ai and ai.ai_available()):
+        if name_or_desc and hits:
+            score = web_search.name_corroboration(name_or_desc, hits)
+            # Αν η ονομασία επιβεβαιώνεται από τα αποτελέσματα, κράτα τη με confidence
+            # ανάλογο της επικάλυψης· αλλιώς ο caller πέφτει σε categories fallback.
+            if score >= 0.5:
+                result.description_el, result.description_en = translate.ensure_bilingual(name_or_desc)
+                result.confidence = round(0.4 + 0.4 * score, 2)
+                return True
+        return False
+
     confirmed = ai.confirm_product(
         barcode=result.barcode, candidate_name=candidate_name,
         candidate_description=candidate_description, brand=brand,

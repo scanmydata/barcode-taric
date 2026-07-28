@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import urllib.error
 import urllib.parse
 from typing import Any
@@ -74,6 +75,68 @@ def _via_openserp(query: str, limit: int) -> list[dict[str, str]]:
     return out
 
 
+def _via_searxng(query: str, limit: int) -> list[dict[str, str]]:
+    """Μετα-μηχανή SearXNG (self-hosted) μέσω JSON API — πολλαπλές μηχανές μαζί.
+
+    Ιδανικό για το μηχάνημα που τρέχει το τοπικό LLM (ollama): μία αναζήτηση χτυπά
+    πολλές μηχανές ταυτόχρονα, χωρίς API key, χωρίς rate-limit της Google. Απαιτεί
+    ενεργό `format: json` στο settings.yml του SearXNG. Χωρίς `searxng_url` -> skip.
+    """
+    base = (SETTINGS.get("searxng_url") or "").strip().rstrip("/")
+    if not base:
+        return []
+    try:
+        timeout = int(SETTINGS.get("searxng_timeout") or 15)
+    except (TypeError, ValueError):
+        timeout = 15
+    url = base + "/search?" + urllib.parse.urlencode(
+        {"q": query, "format": "json", "language": "en", "safesearch": "0"}
+    )
+    try:
+        payload = http_json(url, timeout=timeout, headers={"Accept": "application/json"})
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        debug(f"SearXNG failed (running? json enabled?): {exc}")
+        return []
+    items = payload.get("results") or [] if isinstance(payload, dict) else []
+    out: list[dict[str, str]] = []
+    for it in items[:limit]:
+        if not isinstance(it, dict):
+            continue
+        out.append({"title": str(it.get("title", "")),
+                    "url": str(it.get("url", "")),
+                    "snippet": strip_tags(str(it.get("content", "") or it.get("snippet", "")))})
+    return out
+
+
+def _via_brave(query: str, limit: int) -> list[dict[str, str]]:
+    """Brave Search API — επίσημο, γρήγορο, δομημένο JSON, ανεξάρτητο index.
+
+    Δωρεάν tier: ~2000 queries/μήνα με key (dashboard της Brave). Πολύ πιο αξιόπιστο
+    & γρήγορο από το scraping της Google/DDG. Χωρίς key -> σιωπηλά skip.
+    """
+    api_key = SETTINGS.get("brave_api_key")
+    if not api_key:
+        return []
+    url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode(
+        {"q": query, "count": min(limit, 20)}
+    )
+    try:
+        payload = http_json(url, timeout=10, headers={
+            "Accept": "application/json", "X-Subscription-Token": api_key})
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        debug(f"Brave search failed: {exc}")
+        return []
+    results = ((payload.get("web") or {}).get("results")) or []
+    out: list[dict[str, str]] = []
+    for it in results[:limit]:
+        if not isinstance(it, dict):
+            continue
+        out.append({"title": str(it.get("title", "")),
+                    "url": str(it.get("url", "")),
+                    "snippet": strip_tags(str(it.get("description", "")))})
+    return out
+
+
 def _via_google_cse(query: str, limit: int) -> list[dict[str, str]]:
     api_key = SETTINGS.get("google_cse_api_key")
     cse_id = SETTINGS.get("google_cse_id")
@@ -115,7 +178,9 @@ def _via_duckduckgo(query: str, limit: int) -> list[dict[str, str]]:
 
 
 _TIERS = {
+    "searxng": _via_searxng,
     "openserp": _via_openserp,
+    "brave": _via_brave,
     "googlesearch": _via_googlesearch,
     "google_cse": _via_google_cse,
     "duckduckgo": _via_duckduckgo,
@@ -124,7 +189,7 @@ _TIERS = {
 
 def search_web(query: str, *, limit: int = 6) -> list[dict[str, str]]:
     """Δοκιμάζει τα tiers με τη σειρά ρυθμίσεων· επιστρέφει τα πρώτα αποτελέσματα."""
-    order = SETTINGS.get("web_search_order") or ["openserp", "googlesearch", "google_cse", "duckduckgo"]
+    order = SETTINGS.get("web_search_order") or ["searxng", "openserp", "brave", "google_cse", "duckduckgo", "googlesearch"]
     for name in order:
         fn = _TIERS.get(name)
         if fn is None:
@@ -205,3 +270,47 @@ def gather_context(*, barcode: str = "", name: str = "", brand: str = "",
 
     return {"barcode_hits": barcode_hits, "name_hits": name_hits,
             "text": "\n\n".join(text_parts)}
+
+
+# Λέξεις που δεν κουβαλούν ταυτότητα προϊόντος (για το corroboration score).
+_GENERIC_TOKENS = {
+    "the", "and", "for", "with", "product", "products", "buy", "online", "price",
+    "shop", "store", "barcode", "ean", "upc", "gtin", "και", "με", "για", "προϊόν",
+    "προϊον", "τιμη", "τιμή", "αγορα", "αγορά",
+}
+
+
+def _fold(text: str) -> str:
+    """Πεζά + αφαίρεση τόνων, ΚΡΑΤΩΝΤΑΣ ελληνικά ΚΑΙ λατινικά (για cross-check EL/EN)."""
+    lowered = (text or "").lower()
+    stripped = "".join(c for c in unicodedata.normalize("NFKD", lowered)
+                       if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9α-ω\s]", " ", stripped)).strip()
+
+
+def name_corroboration(name: str, items: list[dict[str, str]]) -> float:
+    """Πόσο επιβεβαιώνεται μια υποψήφια ονομασία από τα web αποτελέσματα (0..1).
+
+    Χωρίς AI: μετρά το ποσοστό των διακριτικών λέξεων της ονομασίας που εμφανίζονται
+    στους τίτλους/snippets. Χρησιμεύει ως δικλείδα ΟΤΑΝ το LLM δεν είναι διαθέσιμο —
+    αν η ονομασία δεν βρίσκεται πουθενά στα αποτελέσματα, μάλλον είναι λάθος/junk.
+    """
+    from .http_util import stem_token
+
+    tokens = {stem_token(t) for t in _fold(name).split()
+              if len(t) > 2 and t not in _GENERIC_TOKENS}
+    if not tokens:
+        return 0.0
+    haystack = " ".join(_fold(f"{it.get('title', '')} {it.get('snippet', '')}") for it in items)
+    hay_tokens = {stem_token(t) for t in haystack.split()}
+    hit = sum(1 for t in tokens if _match_token(t, hay_tokens))
+    return hit / len(tokens)
+
+
+def _match_token(token: str, haystack: set[str]) -> bool:
+    if token in haystack:
+        return True
+    # prefix-aware (ενικός/πληθυντικός, κλίσεις που ξεφεύγουν του light stemmer)
+    if len(token) >= 4:
+        return any(len(h) >= 4 and (h.startswith(token) or token.startswith(h)) for h in haystack)
+    return False

@@ -47,11 +47,21 @@ cli.py        console entry (project.scripts: barcodetaric)
 
 engine/       καθαρή μηχανή (χωρίς Qt, χωρίς SQL εκτός μέσω repo)
   http_util.py     urllib helpers, text normalisation, stem_token (EL+EN light stemmer)
-  ai.py            provider chain: openrouter(:free)->duckduckgo->pollinations, groq stub. chat()/translate()/
+  ai.py            provider chain: custom(OpenAI-compat, π.χ. local ollama)->openrouter(:free)->groq->
+                   duckduckgo->pollinations. chat()/translate()/
                    infer_product()/rank_taric()/rationalize(). Διαβάζει SETTINGS.
-  web_search.py    Google results 3 tiers: googlesearch-python -> Google CSE API -> DuckDuckGo HTML.
+  web_search.py    Google results σε tiers (σειρά ταχύτητας): SearXNG(self-hosted meta) -> OpenSERP
+                   (headless) -> Brave API -> Google CSE -> DuckDuckGo HTML -> googlesearch(αργό, έσχατο).
+                   name_corroboration(): non-AI cross-check ονομασίας με τα αποτελέσματα.
   barcode_sources.py  multi-source lookup + EAN13 helpers. fetch_product() = AI/web -> OFF/UPC/scrapers.
-  translate.py     EL<->EN (μέσω ai) + product-name quality gates (sanitize_name).
+  translation_api.py ΔΩΡΕΑΝ μετάφραση EL<->EN ΧΩΡΙΣ LLM: MyMemory (no key, μνήμη ΕΕ/ΟΗΕ) +
+                   LibreTranslate (optional). cache. to_english()/to_greek(). Βασική γλώσσα
+                   κατάταξης = Αγγλικά (classify_in_english).
+  translate.py     EL<->EN (translation_api πρώτα, ai fallback: translate_text) + quality gates.
+  ocr.py           OCR ετικέτας από φωτό προϊόντος (ocr.space, key-gated). ocr_image_url().
+  embeddings.py    ΕΝΝΟΙΟΛΟΓΙΚΗ αντιστοίχιση: τοπικά multilingual sentence-transformers (offline,
+                   extra [semantic]). Cache πίνακα ονοματολογίας σε taric_embeddings.npz (invalidate
+                   ανά row_count). semantic_candidates() -> [(cosine, TaricRow)]. Graceful αν λείπει.
   ml_classifier.py τοπικό ML (TF-IDF + LogisticRegression), TaricML (train/predict/save/load), get_model()/retrain().
   taric_match.py   ΕΝΟΡΧΗΣΤΡΩΤΗΣ αντιστοίχισης (βλ. «Pipeline» πιο κάτω). MatchResult.
   resolve.py       top-level: resolve_barcode()/resolve_description() -> ResolveResult (περιγραφή EL/EN + TARIC).
@@ -101,8 +111,10 @@ engine modules importάρουν `.. import repo`. Δεν υπάρχει κύκλ
 
 1. **catalog** — αν το barcode υπάρχει ήδη στο `catalog` με taric_code → επιστροφή αμέσως.
 2. **ml** — `ml_classifier.get_model().predict()`. Αν stage=="taric" & confidence ≥ threshold → επιστροφή **χωρίς AI**.
-3. **fts** — `repo.search_taric()` (FTS πάνω στο ΙΕΡΑΡΧΙΚΟ path) → `_score()` **IDF-σταθμισμένο** (κοινές
-   λέξεις νερό/water/other μετράνε λίγο, σπάνιες coffee/mineral πολύ· prefix-aware + stemmed) → top υποψήφιοι.
+3. **fts + semantic** — `repo.search_taric()` (FTS πάνω στο ΙΕΡΑΡΧΙΚΟ path) → `_score()` **IDF-σταθμισμένο**
+   (κοινές λέξεις νερό/water/other μετράνε λίγο, σπάνιες coffee/mineral πολύ· prefix-aware + stemmed).
+   ΠΑΡΑΛΛΗΛΑ `embeddings.semantic_candidates()` (αν εγκατεστημένο) δίνει εννοιολογικούς υποψηφίους. Τα δύο
+   σύνολα ΕΝΩΝΟΝΤΑΙ (`_merge_candidates`) για το AI ranking· στο fallback χωρίς AI κερδίζει το ισχυρότερο tier.
 4. **ai** — μόνο αν υπάρχουν υποψήφιοι & `ai.ai_available()`: `ai.rank_taric()` επιλέγει + δίνει rationalization.
 5. fallback: κορυφαίος FTS υποψήφιος χωρίς AI.
 

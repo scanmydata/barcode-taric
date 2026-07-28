@@ -25,7 +25,8 @@ def _seed():
 def test_offline_fts_match(el, en, expected):
     m = taric_match.match(el, en, use_ai=False)
     assert m.taric_code == expected
-    assert m.taric_source in ("fts", "ml", "catalog")
+    # semantic = εννοιολογικό tier (embeddings)· ενεργό μόνο αν είναι εγκατεστημένο.
+    assert m.taric_source in ("fts", "semantic", "ml", "catalog")
 
 
 def test_catalog_shortcut():

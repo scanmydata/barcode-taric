@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
 
         self._show("clients")
         self._startup_taric_check()
+        self._warm_embeddings()
 
     # ------------------------------------------------------------- nav ----
     def _on_menu(self, name: str) -> None:
@@ -134,3 +135,15 @@ class MainWindow(QMainWindow):
     def _on_startup_updated(self, n: int) -> None:
         self.statusBar().showMessage(f"Η ονοματολογία TARIC ενημερώθηκε από ΕΕ ({n} κωδικοί).", 10000)
         self.taric_page.refresh()
+        self._warm_embeddings()
+
+    def _warm_embeddings(self) -> None:
+        """Χτίζει το εννοιολογικό μοντέλο (embeddings) σε background — το ΠΡΩΤΟ build
+        της πλήρους ονοματολογίας είναι ακριβό (λεπτά σε CPU). Μέχρι να ετοιμαστεί, η
+        κατάταξη δουλεύει με FTS· έτσι το UI δεν παγώνει ποτέ."""
+        from ..engine import embeddings
+        from .workers import run_async
+        if not embeddings.available() or embeddings.is_cache_ready():
+            return
+        run_async(self, embeddings.warm, on_done=lambda _r: None, on_error=lambda _m: None,
+                  on_progress=lambda m: self.statusBar().showMessage(m, 6000))

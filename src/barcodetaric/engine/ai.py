@@ -119,6 +119,46 @@ def _duckduckgo(prompt: str, timeout: int) -> Optional[str]:
     return _parse_ai_text(response)
 
 
+def _custom_endpoint_url() -> str:
+    """Κανονικοποίηση του custom URL σε OpenAI-compatible chat/completions endpoint.
+
+    Δέχεται είτε πλήρες endpoint (…/chat/completions), είτε base (…/v1), είτε host
+    σκέτο — και συμπληρώνει ό,τι λείπει. Έτσι ο χρήστης βάζει π.χ. το cloudflare
+    tunnel URL του τοπικού ollama (http://host:11434) και δουλεύει.
+    """
+    url = (SETTINGS.get("custom_ai_url") or "").strip().rstrip("/")
+    if not url:
+        return ""
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/v1"):
+        return url + "/chat/completions"
+    return url + "/v1/chat/completions"
+
+
+def _custom(prompt: str, timeout: int) -> Optional[str]:
+    """OpenAI-compatible custom endpoint (π.χ. τοπικό ollama μέσω cloudflare tunnel).
+
+    Χρήσιμο για μελλοντικό self-hosted LLM: δηλώνεις URL + (προαιρετικά) key + model
+    στις Ρυθμίσεις. Ο τοπικός server δεν χρειάζεται key — το Authorization μπαίνει
+    μόνο αν οριστεί."""
+    url = _custom_endpoint_url()
+    if not url:
+        return None
+    model = SETTINGS.get("custom_ai_model") or "llama3.1"
+    headers = {"Content-Type": "application/json"}
+    api_key = SETTINGS.get("custom_ai_key") or os.getenv("CUSTOM_AI_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
+               "temperature": 0, "stream": False}
+    response = http_json(url, method="POST", body=payload, headers=headers, timeout=timeout)
+    if isinstance(response, dict) and response.get("error"):
+        debug(f"Custom endpoint error: {response.get('error')}")
+        return None
+    return _parse_ai_text(response)
+
+
 def _groq(prompt: str, timeout: int) -> Optional[str]:
     """Groq: δωρεάν, γρήγορο, αξιόπιστο (llama-3.3-70b). Χρειάζεται δωρεάν API key
     από console.groq.com (χωρίς κάρτα). Είναι η πιο αξιόπιστη δωρεάν επιλογή τώρα
@@ -138,6 +178,7 @@ def _groq(prompt: str, timeout: int) -> Optional[str]:
 
 
 _PROVIDERS = {
+    "custom": _custom,
     "openrouter": _openrouter,
     "pollinations": _pollinations,
     "duckduckgo": _duckduckgo,
@@ -147,7 +188,9 @@ _PROVIDERS = {
 
 def ai_available() -> bool:
     """True αν υπάρχει τουλάχιστον ένας provider που μπορεί να απαντήσει."""
-    order = SETTINGS.get("ai_provider_order") or ["openrouter", "groq", "duckduckgo", "pollinations"]
+    order = SETTINGS.get("ai_provider_order") or ["custom", "openrouter", "groq", "duckduckgo", "pollinations"]
+    if "custom" in order and (SETTINGS.get("custom_ai_url") or "").strip():
+        return True
     if "openrouter" in order and (SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")):
         return True
     if "groq" in order and (SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY")):

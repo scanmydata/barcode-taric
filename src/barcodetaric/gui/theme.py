@@ -108,14 +108,13 @@ def build(p: Palette) -> str:
         font-weight: 600;
     }}
 
-    QPushButton#tile {{
+    QFrame#tile {{
         background: {p.chip};
         border: 1px solid {p.line};
         border-radius: 12px;
-        padding: 12px;
-        text-align: left;
     }}
-    QPushButton#tile:hover {{ border-color: {p.accent}; }}
+    QFrame#tile:hover {{ border-color: {p.accent}; }}
+    QLabel#tileValue {{ font-size: 26px; font-weight: 700; }}
 
     QLineEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
         background: {p.chip};

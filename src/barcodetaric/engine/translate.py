@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from . import ai
+from . import ai, translation_api
 from .http_util import contains_greek, contains_latin, normalize_for_matching
 
 _SPAM_TOKENS = {
@@ -55,10 +55,25 @@ def sanitize_name(name: str, *, brand: str = "", description: str = "", categori
     return derive_fallback_name(brand=brand, description=description, categories=categories) or ""
 
 
+def translate_text(text: str, *, target: str) -> str | None:
+    """Μετάφραση με προτεραιότητα στο ΔΩΡΕΑΝ διαδικτυακό tier (MyMemory/LibreTranslate),
+    και fallback στο LLM. Γρήγορο, ντετερμινιστικό, χωρίς εξάρτηση από διαθέσιμο AI.
+
+    Χρησιμοποιείται όπου η μετάφραση είναι «βοηθητική» (π.χ. να φέρουμε ονομασία στα
+    Αγγλικά για την κατάταξη TARIC), ώστε να μη σπαταλάμε κλήσεις LLM.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    iso = "el" if str(target).lower().startswith("el") else "en"
+    return translation_api.translate(text, target=iso) or ai.translate(text, target=target)
+
+
 def ensure_bilingual(text: str) -> tuple[str, str]:
     """Δέχεται περιγραφή σε οποιαδήποτε γλώσσα, επιστρέφει (ελληνικά, αγγλικά).
 
-    Χρησιμοποιεί AI για τη μετάφραση που λείπει· αν αποτύχει, επιστρέφει ό,τι υπάρχει.
+    Μεταφράζει ό,τι λείπει μέσω του δωρεάν API (LLM ως fallback)· αν όλα αποτύχουν,
+    επιστρέφει ό,τι υπάρχει (ποτέ κενό EL).
     """
     text = (text or "").strip()
     if not text:
@@ -66,9 +81,9 @@ def ensure_bilingual(text: str) -> tuple[str, str]:
     el = text if contains_greek(text) else ""
     en = text if (contains_latin(text) and not contains_greek(text)) else ""
     if el and not en:
-        en = ai.translate(el, target="en") or el      # fallback στο διαθέσιμο κείμενο
+        en = translate_text(el, target="en") or el    # fallback στο διαθέσιμο κείμενο
     elif en and not el:
-        el = ai.translate(en, target="el") or en      # ποτέ κενό EL
+        el = translate_text(en, target="el") or en    # ποτέ κενό EL
     elif not el and not en:
         # ούτε ελληνικά ούτε λατινικά (π.χ. αριθμοί) — κράτα ως έχει
         el = en = text

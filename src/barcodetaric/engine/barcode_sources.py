@@ -120,7 +120,8 @@ def fetch_openfoodfacts(barcode: str) -> dict[str, Any]:
             "brand": p.get("brands"),
             "categories": p.get("categories_en") or p.get("categories"),
             "description": p.get("generic_name_el") or p.get("generic_name"),
-            "quantity": p.get("quantity") or ""}
+            "quantity": p.get("quantity") or "",
+            "image_url": p.get("image_front_url") or p.get("image_url") or ""}
 
 
 def fetch_upcitemdb(barcode: str) -> dict[str, Any]:

@@ -16,8 +16,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import ai
+from . import ai, embeddings, translation_api
 from .ml_classifier import get_model
+from ..config import SETTINGS
 from .. import repo
 
 
@@ -44,6 +45,43 @@ def _norm(text: str) -> str:
     stripped = "".join(c for c in unicodedata.normalize("NFKD", lowered)
                        if not unicodedata.combining(c))
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9α-ω\s]", " ", stripped)).strip()
+
+
+# Θόρυβος που ΒΛΑΠΤΕΙ την κατάταξη: ποσότητες/μεγέθη/ποσοστά/συσκευασία + brand.
+# Π.χ. «ΝΟΥΝΟΥ γιαούρτι 1,5% 2x175g» -> «γιαούρτι»: το «1,5%», «2x175g», «ΝΟΥΝΟΥ»
+# παρασέρνουν και το FTS και τα embeddings (π.χ. σε πρωτεϊνικά supplements αντί γιαουρτιού).
+_QTY_PATTERNS = [
+    re.compile(r"\b\d+[.,]?\d*\s*(?:x|×)\s*\d+[.,]?\d*\s*(?:g|gr|kg|ml|cl|l|lt|lit|τεμ|pcs?)\b", re.I),
+    re.compile(r"\b\d+[.,]?\d*\s*(?:g|gr|kg|ml|cl|l|lt|lit|oz|lb|τεμ|pcs?)\b", re.I),
+    re.compile(r"\b\d+[.,]?\d*\s*%|\b\d+[.,]?\d*\s*(?:vol|λιπαρ\w*|fat)\b", re.I),
+    re.compile(r"\b\d+\s*(?:x|×)\s*\d+\b", re.I),
+    re.compile(r"\b(?:pack|συσκευασ\w*|τεμαχ\w*)\b", re.I),
+]
+_MARKETING_TOKENS = {
+    "new", "νεο", "νέο", "offer", "προσφορα", "value", "family", "οικογενειακη",
+    "premium", "classic", "original", "χωρις", "χωρίς", "free",  # «χωρίς λακτόζη»: κρατάμε «λακτόζη»? όχι, δεν αλλάζει κατάταξη
+    "lactose", "λακτοζη", "λακτόζη",
+}
+
+
+def clean_for_classification(text: str, *, brand: str = "") -> str:
+    """Αφαιρεί θόρυβο (ποσότητα/μέγεθος/ποσοστά/μάρκα/marketing) ώστε να μείνει το
+    ΕΙΔΟΣ του προϊόντος — αυτό που καθορίζει την τελωνειακή κατάταξη."""
+    out = text or ""
+    for pat in _QTY_PATTERNS:
+        out = pat.sub(" ", out)
+    tokens = out.split()
+    brand_toks = {t for t in _norm(brand).split() if len(t) > 1} if brand else set()
+    kept = []
+    for tok in tokens:
+        n = _norm(tok)
+        if not n:
+            continue
+        if n in brand_toks or n in _MARKETING_TOKENS:
+            continue
+        kept.append(tok)
+    cleaned = re.sub(r"\s+", " ", " ".join(kept)).strip()
+    return cleaned or text  # ποτέ κενό (αν όλα ήταν «θόρυβος», κράτα το αρχικό)
 
 
 def _tokens(text: str) -> set[str]:
@@ -152,11 +190,20 @@ def fts_candidates(description_el: str, description_en: str, *, top: int = 5,
     rows = repo.search_taric(query, limit=60)
     qtokens = _tokens(query)
     preferred, penalized = _chapter_prior(source, categories)
-    scored = sorted(
-        ((_apply_chapter_prior(_score(qtokens, r), r, preferred, penalized), r) for r in rows),
-        key=lambda x: x[0], reverse=True,
-    )
-    return [(s, r) for s, r in scored if s > 0][:top]
+    # BM25 relevance co-signal: το FTS επιστρέφει best-first. Ο IDF _score μόνος του
+    # μπορεί να προωθήσει λάθος γραμμή όταν μια ΣΠΑΝΙΑ λέξη-επίθετο (π.χ. «unsalted»)
+    # ταιριάζει σε άσχετο κεφάλαιο (αποξηραμένος μπακαλιάρος) πάνω από τη λέξη-πυρήνα
+    # («butter»). Κρατώντας τη σειρά retrieval ως ήπιο bonus, δεν ακυρώνεται το BM25.
+    n = len(rows) or 1
+    scored = []
+    for idx, r in enumerate(rows):
+        base = _apply_chapter_prior(_score(qtokens, r), r, preferred, penalized)
+        if base <= 0:
+            continue
+        rel_bonus = 0.30 * (1.0 - idx / n)      # 1η θέση +0.30 → φθίνει
+        scored.append((base + rel_bonus, r))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[:top]
 
 
 def match(description_el: str, description_en: str = "", *, barcode: str = "",
@@ -164,7 +211,20 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
           source: str = "", use_ai: bool = True) -> MatchResult:
     description_el = (description_el or "").strip()
     description_en = (description_en or "").strip()
-    combined = f"{description_el} {description_en}".strip()
+
+    # English-first: η επίσημη ΕΕ ονοματολογία (CN/HS) είναι τυποποιημένη στα Αγγλικά,
+    # οπότε η κατάταξη είναι ακριβέστερη με αγγλικό query. Αν λείπει το EN αλλά υπάρχει
+    # EL, το μεταφράζουμε μέσω του δωρεάν tier (χωρίς LLM) πριν το scoring/AI ranking.
+    if SETTINGS.get("classify_in_english", True) and description_el and not description_en:
+        translated = translation_api.to_english(description_el)
+        if translated and translated.strip().lower() != description_el.strip().lower():
+            description_en = translated.strip()
+
+    combined = f"{description_en} {description_el}".strip()  # EN πρώτο (βασική γλώσσα)
+    # Καθαρισμένο query για την κατάταξη (χωρίς brand/ποσότητα/marketing θόρυβο).
+    clean_en = clean_for_classification(description_en, brand=brand)
+    clean_el = clean_for_classification(description_el, brand=brand)
+    clean_combined = f"{clean_en} {clean_el}".strip() or combined
 
     # (α) γνωστό barcode στο catalog με έγκυρο TARIC
     if barcode:
@@ -184,16 +244,25 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                confidence=pred.confidence, taric_source="ml",
                                ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
 
-    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (με chapter prior από την πηγή)
-    cands = fts_candidates(description_el, description_en, top=6, source=source, categories=categories)
-    cand_dicts = [{"code": r.code,
-                   "description_el": r.description_path_el or r.description_el,
-                   "description_en": r.description_path_en or r.description_en,
-                   "hs4": r.hs4} for _, r in cands]
+    # (γ) FTS (λέξεις) + ΕΝΝΟΙΟΛΟΓΙΚΑ embeddings (νόημα) στην ΕΕ ονοματολογία.
+    # Τα δύο tiers είναι συμπληρωματικά: το FTS πιάνει ακριβείς όρους, τα embeddings
+    # πιάνουν συνώνυμα/παραφράσεις. Τα ενώνουμε ώστε το AI να δει πλουσιότερο σύνολο.
+    cands = fts_candidates(clean_el, clean_en, top=6, source=source, categories=categories)
+    sem = embeddings.semantic_candidates(clean_combined, top=6) if clean_combined else []
+    fts_top = cands[0][0] if cands else 0.0
+    sem_top = sem[0][0] if sem else 0.0
+
+    # Guard: το semantic είναι θορυβώδες σε ονόματα προϊόντων· επιτρέπεται να «οδηγήσει»
+    # μόνο αν ΣΥΜΦΩΝΕΙ με το FTS στο HS4 (ίδιο κεφάλαιο) ή αν το FTS είναι κενό. Αλλιώς
+    # εμπιστευόμαστε το FTS (λεξιλογικά ακριβές για όρους όπως «yogurt»).
+    fts_hs4 = {(getattr(r, "hs4", "") or "")[:4] for _s, r in cands if getattr(r, "hs4", "")}
+    sem_agrees = bool(sem and (not fts_hs4 or (getattr(sem[0][1], "hs4", "") or "")[:4] in fts_hs4))
+
+    cand_dicts = _merge_candidates(cands, sem)
 
     # (δ) AI rank + rationalization (μόνο αν διαθέσιμο & υπάρχουν υποψήφιοι)
     if use_ai and cand_dicts and ai.ai_available():
-        ranked = ai.rank_taric(combined, cand_dicts)
+        ranked = ai.rank_taric(clean_combined, cand_dicts)
         if ranked:
             chosen = next((c for c in cand_dicts if c["code"] == ranked["code"]), cand_dicts[0])
             return MatchResult(taric_code=ranked["code"], hs4=chosen.get("hs4") or ranked["code"][:4],
@@ -202,7 +271,15 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                ai_rationale=ranked.get("rationale", ""), taric_source="ai",
                                candidates=cand_dicts)
 
-    # fallback: κορυφαίος FTS υποψήφιος χωρίς AI
+    # fallback χωρίς AI: το semantic «οδηγεί» ΜΟΝΟ αν συμφωνεί με το FTS στο HS4
+    # (ή αν το FTS είναι κενό) — αλλιώς εμπιστευόμαστε το λεξιλογικά ακριβές FTS.
+    if sem and sem_agrees and sem_top >= 0.45 and sem_top >= fts_top:
+        top_row = sem[0][1]
+        return MatchResult(taric_code=top_row.code, hs4=top_row.hs4 or top_row.code[:4],
+                           taric_description=top_row.description_el or top_row.description_en,
+                           confidence=round(min(0.6, sem_top), 2), taric_source="semantic",
+                           ai_rationale="Εννοιολογική αντιστοίχιση (embeddings) στην ΕΕ ονοματολογία.",
+                           candidates=cand_dicts)
     if cands:
         top_score, top_row = cands[0]
         return MatchResult(taric_code=top_row.code, hs4=top_row.hs4 or top_row.code[:4],
@@ -212,6 +289,21 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                            candidates=cand_dicts)
 
     return MatchResult(taric_source="none")
+
+
+def _merge_candidates(fts: list, sem: list) -> list[dict]:
+    """Ένωση FTS + semantic υποψηφίων (dedup ανά code, FTS σειρά πρώτα)."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for _s, r in list(fts) + list(sem):
+        if r.code in seen:
+            continue
+        seen.add(r.code)
+        out.append({"code": r.code,
+                    "description_el": getattr(r, "description_path_el", "") or r.description_el,
+                    "description_en": getattr(r, "description_path_en", "") or r.description_en,
+                    "hs4": r.hs4})
+    return out
 
 
 def _lookup_taric_desc(code: str) -> str:
