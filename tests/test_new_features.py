@@ -134,6 +134,23 @@ def test_web_context_query_uses_name_brand_category(monkeypatch):
     assert "hazelnut" in seen["q"].lower()
 
 
+def test_confirm_identity_stores_ai_analysis(monkeypatch):
+    """Το ΕΞΥΠΝΟ analysis από το confirm_product πρέπει να αποθηκεύεται στο ResolveResult."""
+    from barcodetaric.engine import ai, web_search
+    from barcodetaric.engine.resolve import ResolveResult, _confirm_identity
+    monkeypatch.setattr(ai, "ai_available", lambda: True)
+    monkeypatch.setattr(web_search, "gather_context",
+                        lambda **k: {"barcode_hits": [], "name_hits": [], "text": ""})
+    monkeypatch.setattr(ai, "confirm_product", lambda **k: {
+        "name_el": "γάλα", "name_en": "milk", "is_product": True, "customs_hint": "cow milk",
+        "analysis": "Dairy product; cow milk, pasteurised; food, HS chapter 04.", "confidence": 0.9})
+    r = ResolveResult()
+    ok = _confirm_identity(r, candidate_name="γάλα αγελάδος", use_ai=True)
+    assert ok
+    assert r.analysis == "Dairy product; cow milk, pasteurised; food, HS chapter 04."
+    assert r.customs_hint == "cow milk"
+
+
 def test_analysis_field_roundtrip():
     """Το πεδίο analysis (δομημένη ανάλυση προϊόντος) πρέπει να αποθηκεύεται & να διαβάζεται."""
     from barcodetaric import repo

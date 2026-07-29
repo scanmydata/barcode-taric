@@ -9,6 +9,16 @@ project, **πώς λειτουργεί** και **τι πρέπει να προ�
 > (Ollama/Cloudflare), smart free-model pick + auto-fallback σε 404, πίνακες
 > sortable/reorderable/multi-select (id σε `Qt.UserRole`, ΟΧΙ positional), headless Chrome με
 > προφίλ χρήστη. Το `conftest.py` **εξουδετερώνει network** (αλλιώς το suite κρέμαγε σε real AI/Chrome).
+>
+> **Πρόσφατα (round 4):** undetected-chromedriver ως προτιμώμενος headless driver (anti-bot· graceful
+> fallback σε plain selenium· θέλει `setuptools` σε Py3.12+). **Candidate diversity** (≤2/hs4) ώστε το
+> σωστό κεφάλαιο (0401 Γάλα) να φτάνει στο AI αντί να το «πνίγουν» sub-codes μιας κλάσης (1901). Chapter-
+> aware `rank_taric` prompt. Λειτουργικό test: `scripts/search_smoketest.py`. Επιβεβαιωμένο: Δέλτα/Στάμου
+> γάλα -> 0401 (πριν: Deltamethrin/1901)· headless Bing/DDG φέρνει σωστά ελληνικά αποτελέσματα.
+> **Έξυπνη ανάλυση:** το `confirm_product` (ΕΝΑ AI βήμα) επιστρέφει πλέον και `analysis` — δομημένη
+> αγγλική ανάλυση (υλικό/τύπος/μορφή/χρήση/κεφάλαιο HS) για κάθε προϊόν· αποθηκεύεται (πεδίο `analysis`)
+> & τροφοδοτεί το ML. ΔΕΝ μπαίνει αυτούσια στο FTS match text (μπορεί να έχει λάθος code-guess). Prompt
+> αγγλικό/JSON, δουλεύει και με local **ollama qwen** (custom endpoint).
 
 ## Τι είναι
 
@@ -63,7 +73,10 @@ engine/       καθαρή μηχανή (χωρίς Qt, χωρίς SQL εκτό�
                    headless(ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium· headless_engine=bing/duckduckgo/google) ->
                    Google CSE -> googlesearch -> OpenSERP. `_via_headless`/`_headless_search` = το ισχυρό
                    fallback (Bing/DDG δουλεύουν με automation· Google -> CAPTCHA /sorry). Cached driver.
+                   `_init_undetected()` = undetected-chromedriver (anti-bot) ΠΡΩΤΑ, graceful fallback σε
+                   plain selenium (`headless_undetected`). ΣΗΜ: uc θέλει `setuptools` σε Py3.12+ (distutils).
                    name_corroboration(): non-AI cross-check ονομασίας. test_tiers()=debugger.
+                   Χειροκίνητο functional test: `scripts/search_smoketest.py [--headed] ["query"]`.
   barcode_sources.py  multi-source lookup + EAN13 helpers. fetch_product() = AI/web -> OFF/UPC/scrapers.
   translation_api.py ΔΩΡΕΑΝ μετάφραση EL<->EN ΧΩΡΙΣ LLM: MyMemory (no key, μνήμη ΕΕ/ΟΗΕ) +
                    LibreTranslate (optional). cache. to_english()/to_greek(). Βασική γλώσσα
@@ -126,7 +139,11 @@ engine modules importάρουν `.. import repo`. Δεν υπάρχει κύκλ
    (κοινές λέξεις νερό/water/other μετράνε λίγο, σπάνιες coffee/mineral πολύ· prefix-aware + stemmed).
    ΠΑΡΑΛΛΗΛΑ `embeddings.semantic_candidates()` (αν εγκατεστημένο) δίνει εννοιολογικούς υποψηφίους. Τα δύο
    σύνολα ΕΝΩΝΟΝΤΑΙ (`_merge_candidates`) για το AI ranking· στο fallback χωρίς AI κερδίζει το ισχυρότερο tier.
-4. **ai** — μόνο αν υπάρχουν υποψήφιοι & `ai.ai_available()`: `ai.rank_taric()` επιλέγει + δίνει rationalization.
+   **DIVERSITY (≤2 ανά hs4):** το `fts_candidates` δεν αφήνει sub-codes ΜΙΑΣ επικεφαλίδας (π.χ. δεκάδες
+   1901…) να γεμίσουν το top-8, αλλιώς η σωστή γειτονική κλάση (0401/0402 Γάλα) δεν έφτανε ποτέ στο AI.
+4. **ai** — μόνο αν υπάρχουν υποψήφιοι & `ai.ai_available()`: `ai.rank_taric()` επιλέγει + rationalization.
+   Το prompt είναι **chapter-aware** (διαλέγει πρώτα κεφάλαιο HS `[NN]`, απορρίπτει άσχετα κεφάλαια —
+   π.χ. τρόφιμο ≠ χημικό/pesticide λόγω brand) + σύντομο reasoning βήμα.
 5. fallback: κορυφαίος FTS υποψήφιος χωρίς AI.
 
 Το `match()` δέχεται και brand/quantity/categories (τροφοδοτούν ML features & match text). Η μηχανή

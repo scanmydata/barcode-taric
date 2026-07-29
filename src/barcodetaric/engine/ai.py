@@ -418,32 +418,41 @@ def confirm_product(*, barcode: str = "", candidate_name: str = "",
         f"Πρόσθετη περιγραφή πηγής: {candidate_description}" if candidate_description else "",
     ) if p)
     prompt = (
-        "Είσαι βοηθός τελωνειακής ταξινόμησης. Σου δίνω ό,τι ξέρουμε για ένα προϊόν από "
-        "βάσεις barcode ΚΑΙ αποτελέσματα αναζήτησης web (για το barcode και για την ονομασία). "
-        "Διασταύρωσέ τα και προσδιόρισε ΤΙ ΑΚΡΙΒΩΣ είναι το προϊόν. "
-        "Επίστρεψε ΜΟΝΟ έγκυρο JSON με κλειδιά: "
-        "name_el (σύντομη ΟΝΟΜΑΣΙΑ στα ελληνικά, ΜΟΝΟ τι είναι το προϊόν, όχι αναλυτική περιγραφή), "
-        "name_en (η ίδια σύντομη ονομασία στα αγγλικά), "
-        "is_product (true αν είναι υλικό αγαθό που κατατάσσεται σε TARIC· false αν είναι υπηρεσία/άυλο), "
-        "customs_hint (σύντομη ΑΓΓΛΙΚΗ φράση με το είδος/υλικό/χρήση για την κατάταξη, π.χ. "
-        "'natural mineral water, bottled, still'), "
-        "confidence (0..1, πόσο συμφωνούν οι πηγές). "
-        "Αν οι πηγές είναι ασαφείς/αντιφατικές, βάλε χαμηλό confidence και μην εφευρίσκεις. "
-        "ΜΗΝ μπερδέψεις πόσιμο/μεταλλικό νερό (τρόφιμο) με 'toilet water'/άρωμα.\n\n"
-        f"{known}\n\n{web_context or '(δεν υπάρχουν web αποτελέσματα)'}"
+        "You are an EU customs (TARIC/CN) classification assistant. Below is everything known about a "
+        "product from barcode databases AND web search results (for the barcode and for the name). "
+        "Cross-check them and determine WHAT THE PRODUCT EXACTLY IS, then produce a structured "
+        "customs analysis. Reply with ONLY valid JSON (no markdown, no commentary) with these keys:\n"
+        '  "name_el":   short PRODUCT NAME in Greek (only what it is, not a long description),\n'
+        '  "name_en":   the same short name in English,\n'
+        '  "is_product": true if it is a physical good classifiable under TARIC; false if a service/intangible,\n'
+        '  "customs_hint": ONE short English phrase of kind/material/use for classification '
+        "(e.g. 'natural mineral water, bottled, still'),\n"
+        '  "analysis":  a concise ENGLISH structured analysis for tariff classification & ML, covering '
+        "(when knowable): material/composition, product type, physical form/state, processing, "
+        "intended use, and the likely HS chapter. 1-3 short clauses, factual, e.g. "
+        "'Dairy product; cow milk, pasteurized, whole ~3.5% fat; liquid, retail 1L; food, HS chapter 04.',\n"
+        '  "confidence": 0..1 (how well the sources agree).\n'
+        "Rules: do NOT invent facts not supported by the sources; if unclear, keep it generic and lower "
+        "confidence. Classify by what it ESSENTIALLY is, not by brand. Do NOT confuse drinking/mineral "
+        "water (food, ch.22) with 'toilet water'/perfume (ch.33).\n\n"
+        f"{known}\n\n{web_context or '(no web results)'}"
     )
-    data = _extract_json(chat(prompt, timeout=30, max_len=700))
+    data = _extract_json(chat(prompt, timeout=30, max_len=900))
     if not isinstance(data, dict):
         return None
     try:
         confidence = float(data.get("confidence", 0.0))
     except (TypeError, ValueError):
         confidence = 0.0
+    analysis = data.get("analysis")
+    if isinstance(analysis, (list, tuple)):   # μερικά μοντέλα γυρνούν array
+        analysis = "; ".join(str(a) for a in analysis if a)
     return {
         "name_el": str(data.get("name_el") or "").strip(),
         "name_en": str(data.get("name_en") or "").strip(),
         "is_product": bool(data.get("is_product", True)),
         "customs_hint": str(data.get("customs_hint") or "").strip(),
+        "analysis": str(analysis or "").strip(),
         "confidence": max(0.0, min(1.0, confidence)),
     }
 
@@ -456,24 +465,30 @@ def rank_taric(description: str, candidates: list[dict[str, Any]]) -> Optional[d
     """
     if not candidates:
         return None
+    # Ομαδοποίηση ανά κεφάλαιο HS (2 πρώτα ψηφία) ώστε το μοντέλο να «βλέπει» το σωστό context.
     lines = "\n".join(
-        f"{i+1}. {c['code']} - {c.get('description_en') or c.get('description_el','')}"
+        f"{i+1}. [{c['code'][:2]}] {c['code']} - {c.get('description_en') or c.get('description_el','')}"
         for i, c in enumerate(candidates)
     )
     prompt = (
         "You are an expert EU customs (TARIC/Combined Nomenclature) classifier. "
         "Choose the SINGLE best-matching code for the product from the candidate list below.\n"
-        "Rules:\n"
-        "- Classify by what the product ESSENTIALLY is (material, composition, function), not by brand.\n"
-        "- Prefer the most SPECIFIC matching heading; use a generic/'other' (…90/…99) code only if "
-        "no specific one fits.\n"
-        "- The chosen code MUST be exactly one of the candidate codes (copy it verbatim).\n"
-        "- If several fit, pick the one whose description best matches the material & use.\n"
-        "Return ONLY valid JSON: {\"code\": \"<one candidate code>\", "
+        "Method (think step by step, briefly):\n"
+        "1) Identify what the product ESSENTIALLY is — material, composition, function — NOT the brand.\n"
+        "2) Pick the correct HS CHAPTER first (the [NN] prefix): e.g. dairy milk=04, coffee=09, "
+        "chocolate/cocoa=18, waters/beverages=22, cosmetics/perfume=33, chemicals=28/29. "
+        "REJECT candidates from an unrelated chapter even if words overlap "
+        "(e.g. a food is NOT a chemical/pesticide just because a brand name resembles one).\n"
+        "3) Within that chapter pick the MOST SPECIFIC heading; use a generic/'other' (…90/…99) "
+        "code only if nothing more specific fits.\n"
+        "Constraints: the chosen code MUST be exactly one of the candidate codes (copy verbatim). "
+        "If NONE of the candidates fit the correct chapter, pick the closest and set confidence<=0.3.\n"
+        "Return ONLY valid JSON: {\"reason\": \"<short English chain: what it is + chapter>\", "
+        "\"code\": \"<one candidate code>\", "
         "\"rationale\": \"<μία σύντομη πρόταση στα Ελληνικά>\", \"confidence\": <0..1>}.\n"
         f"Product: {description}\nCandidates:\n{lines}"
     )
-    data = _extract_json(chat(prompt, timeout=25, max_len=500))
+    data = _extract_json(chat(prompt, timeout=25, max_len=600))
     if not data or not data.get("code"):
         return None
     valid_codes = {c["code"] for c in candidates}

@@ -94,6 +94,17 @@ default `searxng → duckduckgo → brave → headless → google_cse → google
    Μηχανή από `headless_engine`: **Bing** (default) & **DuckDuckGo** δουλεύουν με automation· η **Google**
    ζητά CAPTCHA (`/sorry`). `headless_headed=true` = ορατό παράθυρο· προαιρετικά χρήση πραγματικού
    προφίλ Chrome (cookies/consent) — **κλείσε το Chrome πρώτα**.
+   - **[undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver)**
+     (`pip install -e ".[anti_bot]"`) χρησιμοποιείται **αυτόματα ΠΡΩΤΑ** (`headless_undetected=true`)
+     για παράκαμψη anti-bot (Cloudflare/reCAPTCHA)· αν αποτύχει (π.χ. ασυμβατότητα Chrome version),
+     γίνεται **graceful fallback** σε plain Selenium. Σε **Python 3.12+** χρειάζεται και `setuptools`
+     (το uc κάνει `import distutils`) — περιλαμβάνεται στο extra.
+
+**Λειτουργικό test αναζήτησης** (headed ή headless, πραγματικός browser):
+```bash
+.venv\Scripts\python scripts\search_smoketest.py            # headless
+.venv\Scripts\python scripts\search_smoketest.py --headed   # ορατό παράθυρο Chrome
+```
 5. **Google CSE** (100/μέρα δωρεάν, με key+cse_id) · **googlesearch-python** (έσχατο) · **OpenSERP** (docker).
 
 Όλα κάνουν σιωπηλά fallback στο επόμενο. Τα αποτελέσματα τροφοδοτούν το cross-check ταυτότητας (και

@@ -168,6 +168,9 @@ def _confirm_identity(result: ResolveResult, *, candidate_name: str, candidate_d
     result.description_el, result.description_en = _fill_bilingual(el, en)
     result.is_product = confirmed["is_product"]
     result.customs_hint = confirmed["customs_hint"]
+    # Έξυπνη δομημένη ανάλυση (υλικό/τύπος/μορφή/χρήση/κεφάλαιο HS) από το ΙΔΙΟ AI βήμα —
+    # χωρίς επιπλέον κλήση. Τροφοδοτεί ΚΑΙ την κατάταξη ΚΑΙ το ML training.
+    result.analysis = confirmed.get("analysis", "")
     result.confidence = confirmed["confidence"]
     if confirmed["confidence"]:
         result.found = True
@@ -197,10 +200,15 @@ def _apply_match(result: ResolveResult, *, use_ai: bool) -> None:
     # Στην κατάταξη δίνουμε ΟΝΟΜΑΣΙΑ + customs_hint (είδος/υλικό) + κατηγορίες:
     # το hint ξεχωρίζει π.χ. «μεταλλικό νερό» (2201) από «toilet water» (3303).
     hint = result.customs_hint
-    # Δομημένη «ανάλυση» προϊόντος (αποθηκεύεται πίσω από την περιγραφή): υλικό/τύπος (hint) +
-    # κατηγορίες + μάρκα + ποσότητα. Χρησιμεύει για ακριβέστερη κατάταξη ΚΑΙ ως ML feature.
-    result.analysis = " · ".join(p for p in (
-        hint, result.categories, result.brand, result.quantity) if p)
+    # Δομημένη «ανάλυση» προϊόντος (αποθηκεύεται πίσω από την περιγραφή). Προτίμησε την ΕΞΥΠΝΗ
+    # AI ανάλυση (υλικό/τύπος/μορφή/χρήση/κεφάλαιο HS)· αν δεν υπάρχει (χωρίς AI), σύνθεσέ την από
+    # τα διαθέσιμα πεδία. Χρησιμεύει για ακριβέστερη κατάταξη ΚΑΙ ως ML feature.
+    if not result.analysis:
+        result.analysis = " · ".join(p for p in (
+            hint, result.categories, result.brand, result.quantity) if p)
+    # ΣΗΜ: στο κείμενο κατάταξης βάζουμε ΜΟΝΟ το concise customs_hint + κατηγορίες, ΟΧΙ ολόκληρη
+    # την AI analysis: αυτή μπορεί να περιέχει εικασία κεφαλαίου/κωδικού (π.χ. λάθος «HS 1704») που θα
+    # προκατέβαλλε το keyword retrieval. Η analysis μένει για αποθήκευση + ML feature (πιο ασφαλές).
     el = " ".join(p for p in (result.description_el, hint, result.categories) if p).strip()
     en = " ".join(p for p in (result.description_en, hint, result.categories) if p).strip()
     m = taric_match.match(el, en, barcode=result.barcode, brand=result.brand,

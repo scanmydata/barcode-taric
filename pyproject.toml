@@ -23,7 +23,9 @@ semantic = ["sentence-transformers>=2.6", "numpy>=1.24"]
 # δουλεύει και χωρίς αυτό (πέφτει σε DuckDuckGo/SearXNG). Χρειάζεται εγκατεστημένο Chrome.
 headless = ["selenium>=4.20"]
 # Optional anti-bot / captcha handling for Cloudflare and similar protections.
-anti_bot = ["cloudscraper>=1.2.0", "curl_cffi>=0.10.0", "undetected-chromedriver>=3.5.0"]
+# ΣΗΜ: το undetected-chromedriver χρειάζεται `setuptools` σε Python 3.12+ (import distutils).
+anti_bot = ["cloudscraper>=1.2.0", "curl_cffi>=0.10.0", "undetected-chromedriver>=3.5.0",
+            "setuptools>=69; python_version >= '3.12'"]
 
 [project.scripts]
 barcodetaric = "barcodetaric.cli:main"

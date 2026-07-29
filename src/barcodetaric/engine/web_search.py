@@ -135,11 +135,53 @@ def _via_curl_cffi(query: str, limit: int) -> list[dict[str, str]]:
     return results
 
 
+def _init_undetected():
+    """undetected-chromedriver: patched Chrome που παρακάμπτει anti-bot (Cloudflare/reCAPTCHA).
+
+    github.com/ultrafunkamsterdam/undetected-chromedriver. Προτιμάται όταν είναι
+    εγκατεστημένο (extra `.[headless]`) & `headless_undetected` ενεργό. Graceful -> None.
+    """
+    if not bool(SETTINGS.get("headless_undetected", True)):
+        return None
+    try:
+        import undetected_chromedriver as uc  # type: ignore
+    except Exception:  # noqa: BLE001 - δεν είναι εγκατεστημένο ή ασύμβατο build
+        debug("undetected_chromedriver μη διαθέσιμο — δοκιμή plain selenium")
+        return None
+    try:
+        opts = uc.ChromeOptions()
+        opts.add_argument("--lang=el-GR")
+        opts.add_argument("--window-size=1280,900")
+        opts.add_argument(f"--user-agent={BROWSER_UA}")
+        user_dir = (SETTINGS.get("chrome_user_data_dir") or "").strip()
+        if user_dir:  # πραγματικό προφίλ (cookies/consent) -> ΚΛΕΙΣΕ πρώτα το Chrome
+            opts.add_argument(f"--user-data-dir={user_dir}")
+            profile = (SETTINGS.get("chrome_profile") or "").strip()
+            if profile:
+                opts.add_argument(f"--profile-directory={profile}")
+        binary = (SETTINGS.get("chrome_binary") or "").strip()
+        if binary:
+            opts.binary_location = binary
+        headed = bool(SETTINGS.get("headless_headed"))
+        driver = uc.Chrome(options=opts, headless=not headed, use_subprocess=True)
+        driver.set_page_load_timeout(30)
+        debug("headless driver: undetected-chromedriver")
+        return driver
+    except Exception as exc:  # noqa: BLE001 - version mismatch/init κ.λπ.
+        debug(f"undetected_chromedriver init failed: {exc} — fallback σε plain selenium")
+        return None
+
+
 def _headless_driver():
-    """Lazy, cached headless Chrome μέσω Selenium. None αν λείπει selenium/Chrome."""
+    """Lazy, cached headless Chrome. Προτεραιότητα: undetected-chromedriver (anti-bot) ->
+    plain Selenium. None αν λείπουν όλα (graceful)."""
     global _HEADLESS_DRIVER
     if _HEADLESS_DRIVER is not None:
         return _HEADLESS_DRIVER
+    uc_driver = _init_undetected()
+    if uc_driver is not None:
+        _HEADLESS_DRIVER = uc_driver
+        return uc_driver
     try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options

@@ -54,6 +54,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "captcha_provider_api_key": "",
     "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
     "headless_headed": False,   # true = ορατό παράθυρο Chrome (headed)
+    # undetected-chromedriver: patched Chrome που παρακάμπτει anti-bot (Cloudflare/reCAPTCHA).
+    # Προτιμάται αν είναι εγκατεστημένο· αλλιώς fallback σε plain selenium.
+    "headless_undetected": True,
     # Προαιρετική χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome (cookies/consent). Το Chrome πρέπει
     # να είναι ΚΛΕΙΣΤΟ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
     "chrome_user_data_dir": "",

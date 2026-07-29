@@ -202,7 +202,26 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
         rel_bonus = 0.30 * (1.0 - pos.get(code, n) / n)
         scored.append((s + rel_bonus, r))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [(s, r) for s, r in scored if s > 0][:top]
+    scored = [(s, r) for s, r in scored if s > 0]
+    # DIVERSITY: μη γεμίζει όλο το top με sub-codes ΜΙΑΣ επικεφαλίδας (π.χ. δεκάδες 1901…),
+    # αφήνοντας απ' έξω τη σωστή γειτονική κλάση (0401/0402 Γάλα). Κράτα ≤2 ανά hs4 σε πρώτο
+    # πέρασμα ώστε να μπουν ΔΙΑΦΟΡΕΤΙΚΕΣ κλάσεις -> το AI/ML βλέπει και το σωστό κεφάλαιο.
+    per_hs4: dict[str, int] = {}
+    diverse: list = []
+    overflow: list = []
+    for s, r in scored:
+        hs4 = (getattr(r, "hs4", "") or r.code[:4])
+        if per_hs4.get(hs4, 0) < 2:
+            per_hs4[hs4] = per_hs4.get(hs4, 0) + 1
+            diverse.append((s, r))
+        else:
+            overflow.append((s, r))
+        if len(diverse) >= top:
+            break
+    # αν δεν γέμισε (λίγες διακριτές κλάσεις), συμπλήρωσε από το overflow με τη σειρά score.
+    if len(diverse) < top:
+        diverse.extend(overflow[: top - len(diverse)])
+    return diverse[:top]
 
 
 _FOOD_SOURCES = ("openfoodfacts", "off")
