@@ -54,23 +54,16 @@ cli.py        console entry (project.scripts: barcodetaric)
 
 engine/       καθαρή μηχανή (χωρίς Qt, χωρίς SQL εκτός μέσω repo)
   http_util.py     urllib helpers, text normalisation, stem_token (EL+EN light stemmer)
-<<<<<<< HEAD
-  ai.py            provider chain: custom(OpenAI-compat, π.χ. local ollama)->openrouter(:free)->groq->
-                   duckduckgo->pollinations. chat()/translate()/
-                   infer_product()/rank_taric()/rationalize(). Διαβάζει SETTINGS.
-  web_search.py    Google results σε tiers (σειρά ταχύτητας): SearXNG(self-hosted meta) -> OpenSERP
-                   (headless) -> Brave API -> Google CSE -> DuckDuckGo HTML -> googlesearch(αργό, έσχατο).
-                   name_corroboration(): non-AI cross-check ονομασίας με τα αποτελέσματα.
-=======
-  ai.py            provider chain: openrouter(:free)->custom->duckduckgo->pollinations, groq stub. chat()/
-                   translate()/infer_product()/rank_taric()/rationalize()/enrich_description(web_context).
-                   `_openrouter` έχει AUTO-FALLBACK σε 404 (working->configured->DEFAULT_FREE_MODEL->
-                   openrouter/free, με cache `_WORKING_MODEL`). `best_free_model()`=smart pick, `list_free_models`
-                   φιλτράρει+ταξινομεί chat μοντέλα. `_custom`=OpenAI-συμβατό (Ollama/cloudflare, /v1 base ok).
-  web_search.py    web results 5 tiers: SearXNG(JSON) -> DuckDuckGo -> headless(Selenium/Chrome, Google με JS)
-                   -> googlesearch-python -> Google CSE. `_via_headless` παρακάμπτει το scraping-block αλλά η
-                   Google το CAPTCHA-ρει (/sorry) σε συχνά queries. test_tiers()=debugger. Cached driver.
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
+  ai.py            provider chain (σειρά SETTINGS): custom(OpenAI-compat, π.χ. local ollama μέσω cloudflare,
+                   custom_ai_base_url)->openrouter(:free)->groq->duckduckgo->pollinations. chat()/translate()/
+                   infer_product()/rank_taric()/rationalize()/enrich_description(). `_openrouter` έχει AUTO-FALLBACK
+                   σε 404 (retired free model). `best_free_model()`/`list_free_models`. `_custom_endpoint_url()`
+                   κανονικοποιεί base/…/v1/…/chat/completions.
+  web_search.py    web results tiers (web_search_order): SearXNG(JSON meta) -> DuckDuckGo -> Brave(API) ->
+                   headless(ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium· headless_engine=bing/duckduckgo/google) ->
+                   Google CSE -> googlesearch -> OpenSERP. `_via_headless`/`_headless_search` = το ισχυρό
+                   fallback (Bing/DDG δουλεύουν με automation· Google -> CAPTCHA /sorry). Cached driver.
+                   name_corroboration(): non-AI cross-check ονομασίας. test_tiers()=debugger.
   barcode_sources.py  multi-source lookup + EAN13 helpers. fetch_product() = AI/web -> OFF/UPC/scrapers.
   translation_api.py ΔΩΡΕΑΝ μετάφραση EL<->EN ΧΩΡΙΣ LLM: MyMemory (no key, μνήμη ΕΕ/ΟΗΕ) +
                    LibreTranslate (optional). cache. to_english()/to_greek(). Βασική γλώσσα

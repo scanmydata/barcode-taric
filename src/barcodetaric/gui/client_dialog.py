@@ -25,9 +25,6 @@ class ClientDialog(QDialog):
         form = QFormLayout()
         form.setSpacing(10)
 
-        self._fetching = False
-        self._last_afm = ""        # τελευταίο ΑΦΜ που ζητήθηκε (αποφυγή διπλών κλήσεων)
-
         self.name = QLineEdit(self._client.name)
         self.vat = QLineEdit(self._client.vat)
         self.vat.setPlaceholderText("9 ψηφία — αυτόματη άντληση στοιχείων")
@@ -49,8 +46,6 @@ class ClientDialog(QDialog):
         self.fetch_btn.setToolTip("Συμπλήρωση στοιχείων από το ΓΕΜΗ (Business Portal)")
         self.fetch_btn.clicked.connect(lambda: self._fetch_from_vat())
         vat_l.addWidget(self.fetch_btn)
-        # Αυτόματη άντληση μόλις συμπληρωθεί έγκυρος 9ψήφιος ΑΦΜ (χωρίς πάτημα κουμπιού).
-        self.vat.textChanged.connect(self._on_vat_changed)
 
         # Αυτόματη άντληση μόλις συμπληρωθεί έγκυρος 9ψήφιος ΑΦΜ (με debounce
         # ώστε να μην πυροδοτείται σε κάθε πάτημα πλήκτρου).
@@ -76,27 +71,6 @@ class ClientDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-<<<<<<< HEAD
-    def _on_vat_changed(self, text: str) -> None:
-        """Auto-trigger: μόλις το ΑΦΜ φτάσει ακριβώς 9 ψηφία, άντλησε αυτόματα."""
-        import re
-        digits = re.sub(r"\D", "", text)
-        if len(digits) == 9 and digits != self._last_afm and not self._fetching:
-            self._fetch_from_vat(afm=digits, auto=True)
-        elif len(digits) != 9:
-            # Επίτρεψε νέα άντληση αν ο χρήστης άλλαξε το ΑΦΜ.
-            self._last_afm = ""
-
-    def _fetch_from_vat(self, *, afm: str = "", auto: bool = False) -> None:
-        afm = (afm or self.vat.text()).strip()
-        digits = "".join(ch for ch in afm if ch.isdigit())
-        if not digits:
-            if not auto:
-                self.vat.setFocus()
-            return
-        self._fetching = True
-        self._last_afm = digits
-=======
     def _maybe_auto_fetch(self) -> None:
         """Πυροδοτείται (debounced) μόλις ο ΑΦΜ γίνει έγκυρος 9ψήφιος αριθμός."""
         afm = self.vat.text().strip()
@@ -113,10 +87,9 @@ class ClientDialog(QDialog):
     def _start_lookup(self, afm: str, *, silent: bool) -> None:
         self._last_afm = afm
         self._silent_lookup = silent   # στην αυτόματη άντληση δεν δείχνουμε popup σε αποτυχία
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         self.fetch_btn.setEnabled(False)
         self.fetch_btn.setText("Άντληση…")
-        run_async(self, business_lookup.lookup_by_afm, digits,
+        run_async(self, business_lookup.lookup_by_afm, afm,
                   on_done=self._on_fetched, on_error=lambda _m: self._reset_fetch())
 
     def _on_fetched(self, result: dict) -> None:
@@ -139,7 +112,6 @@ class ClientDialog(QDialog):
             self.notes.setPlainText((existing + "\n" if existing else "") + extra)
 
     def _reset_fetch(self) -> None:
-        self._fetching = False
         self.fetch_btn.setEnabled(True)
         self.fetch_btn.setText("Άντληση από ΑΦΜ")
 

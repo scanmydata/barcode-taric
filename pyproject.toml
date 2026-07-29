@@ -17,14 +17,11 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["pyside6>=6.6"]
 crypto = ["cryptography>=41.0"]
-<<<<<<< HEAD
 # Τοπικά (offline) πολύγλωσσα embeddings για εννοιολογική αντιστοίχιση TARIC.
 semantic = ["sentence-transformers>=2.6", "numpy>=1.24"]
-=======
-# Headless Google search tier (πραγματικό Chrome). Προαιρετικό — το app δουλεύει και
-# χωρίς αυτό (πέφτει σε DuckDuckGo/SearXNG). Χρειάζεται εγκατεστημένο Chrome.
+# Headless browser search tier (πραγματικός Chrome μέσω Selenium). Προαιρετικό — το app
+# δουλεύει και χωρίς αυτό (πέφτει σε DuckDuckGo/SearXNG). Χρειάζεται εγκατεστημένο Chrome.
 headless = ["selenium>=4.20"]
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
 
 [project.scripts]
 barcodetaric = "barcodetaric.cli:main"

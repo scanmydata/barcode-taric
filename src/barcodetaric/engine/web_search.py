@@ -1,18 +1,20 @@
-"""Πραγματικά web results σε πολλαπλά επίπεδα (tiers).
+"""Πραγματικά web results σε πολλαπλά επίπεδα (tiers) — επιστρέφει {title, url, snippet}.
 
-  1. searxng          (self-host ή public SearXNG instance, JSON API — αξιόπιστο, χωρίς blocks)
-  2. googlesearch-python  (δωρεάν scraping, τίτλος+περιγραφή+URL)
-  3. Google Custom Search JSON API  (επίσημο, 100/μέρα δωρεάν, αν υπάρχει key+cse_id)
-  4. DuckDuckGo HTML  (fallback, χωρίς key/όρια)
+Σειρά (ρυθμίζεται με `web_search_order`):
+  1. searxng      self-host/public SearXNG meta-search (JSON API, χωρίς blocks)
+  2. duckduckgo   HTML endpoint (χωρίς key/όρια, γρήγορο)
+  3. brave        Brave Search API (με key)
+  4. headless     ΠΡΑΓΜΑΤΙΚΟΣ browser (Selenium+Chrome) σε Bing/DuckDuckGo/Google — εκτελεί
+                  JS, το ισχυρό fallback που λύνει ό,τι δεν λύνουν τα ελαφριά tiers
+  5. google_cse   Google Custom Search JSON API (key+cse_id)
+  6. googlesearch googlesearch-python (scraping, αργό/rate-limited)
+  7. openserp     τοπικός OpenSERP server (headless browser, χωρίς key)
 
-Επιστρέφει λίστα από dicts {title, url, snippet}. Τα snippets τροφοδοτούν το AI
-για (α) αντιπαραβολή barcode<->περιγραφής και (β) αναγνώριση τι είναι το προϊόν.
-
-SearXNG (github.com/searxng/searxng) είναι meta-search engine που συγκεντρώνει
-δεκάδες πηγές και εκθέτει JSON API (`/search?q=...&format=json`). Το ίδιο endpoint
-χρησιμοποιεί και το mcp-searxng (github.com/ihor-sokoliuk/mcp-searxng). Ρύθμισε το
-`searxng_url` στις ρυθμίσεις (public instance ή τοπικό `http://127.0.0.1:8888`).
-Πολλά public instances κλείνουν το JSON format· για σταθερότητα προτείνεται self-host.
+Τα snippets τροφοδοτούν το AI για (α) αντιπαραβολή barcode<->περιγραφής και (β)
+αναγνώριση τι είναι το προϊόν. SearXNG (github.com/searxng/searxng) εκθέτει το ίδιο
+JSON API με το mcp-searxng (github.com/ihor-sokoliuk/mcp-searxng). Το headless tier
+χρειάζεται `selenium` (extra `.[headless]`) + εγκατεστημένο Chrome· αν λείπουν,
+επιστρέφει [] σιωπηλά (graceful).
 """
 
 from __future__ import annotations
@@ -25,29 +27,6 @@ from typing import Any
 
 from ..config import SETTINGS
 from .http_util import BROWSER_UA, debug, http_json, http_text, strip_tags
-
-
-def _via_searxng(query: str, limit: int) -> list[dict[str, str]]:
-    base = (SETTINGS.get("searxng_url") or "").strip()
-    if not base:
-        return []
-    url = base.rstrip("/") + "/search?" + urllib.parse.urlencode({
-        "q": query, "format": "json", "language": "el", "safesearch": "0",
-    })
-    try:
-        payload = http_json(url, timeout=15, headers={"User-Agent": BROWSER_UA})
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        debug(f"SearXNG failed: {exc}")
-        return []
-    items = payload.get("results") or []
-    out = []
-    for it in items[:limit]:
-        out.append({
-            "title": it.get("title", "") or "",
-            "url": it.get("url", "") or "",
-            "snippet": it.get("content", "") or "",
-        })
-    return out
 
 
 _HEADLESS_DRIVER = None  # cache του Selenium driver (ακριβό να ανοίγει κάθε φορά)
@@ -106,74 +85,96 @@ def _headless_driver():
 
 
 def _via_headless(query: str, limit: int) -> list[dict[str, str]]:
-    """Πραγματικό headless Chrome στη Google (εκτελεί JS) — παρακάμπτει το block στο scraping."""
+    """Πραγματικός browser (Chrome μέσω Selenium) που εκτελεί JS — το ισχυρό fallback
+    όταν τα ελαφριά tiers δεν λύνουν κάτι σωστά.
+
+    Μηχανή αναζήτησης από `headless_engine` (default 'bing'): η **Bing** & το **DuckDuckGo**
+    δουλεύουν αξιόπιστα με πραγματικό Chrome (χωρίς CAPTCHA), σε αντίθεση με τη Google
+    που ανακατευθύνει στο /sorry (reCAPTCHA) σε automation. Headed/headless από
+    `headless_headed`. Ο driver είναι cached."""
     driver = _headless_driver()
     if driver is None:
         return []
+    engine = (SETTINGS.get("headless_engine") or "bing").strip().lower()
+    order = [engine] + [e for e in ("bing", "duckduckgo", "google") if e != engine]
+    for eng in order:
+        try:
+            res = _headless_search(driver, eng, query, limit)
+        except Exception as exc:  # noqa: BLE001 - stale driver / DOM αλλαγές
+            debug(f"headless {eng} failed: {exc}")
+            res = []
+        if res:
+            debug(f"headless via {eng}: {len(res)} results")
+            return res
+    return []
+
+
+def _headless_search(driver, engine: str, query: str, limit: int) -> list[dict[str, str]]:
     from urllib.parse import quote_plus
     from selenium.webdriver.common.by import By
-    url = f"https://www.google.com/search?q={quote_plus(query)}&hl=el&num={min(limit + 3, 15)}"
-    try:
-        driver.get(url)
-    except Exception as exc:  # noqa: BLE001
-        debug(f"headless get failed: {exc}")
-        return []
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    import time as _t
 
-    # Google EU consent wall: πάτα «Αποδοχή όλων» αν εμφανιστεί.
-    try:
-        for xp in ("//button[.//div[contains(text(),'Αποδοχή')]]",
-                   "//button[contains(.,'Accept all')]",
-                   "//button[contains(.,'Αποδοχή όλων')]"):
+    specs = {
+        "bing": ("https://www.bing.com/search?q={q}&setlang=en",
+                 "li.b_algo", "h2 a", ("div.b_caption p", ".b_lineclamp2", "p")),
+        "duckduckgo": ("https://duckduckgo.com/?q={q}&ia=web",
+                       "article[data-testid='result'], div.result__body",
+                       "a[data-testid='result-title-a'], a.result__a",
+                       ("div[data-result='snippet']", "span[data-testid='result-snippet']", "a.result__snippet")),
+        "google": ("https://www.google.com/search?q={q}&hl=en&num={n}",
+                    "div.MjjYud, div.tF2Cxc, div.g", "a[href^='http']",
+                    ("div.VwiC3b", "div[data-sncf]", "div.kb0PBd")),
+    }
+    if engine not in specs:
+        engine = "bing"
+    url_tpl, block_sel, link_sel, snippet_sels = specs[engine]
+    url = url_tpl.format(q=quote_plus(query), n=min(limit + 3, 15))
+    driver.get(url)
+
+    # Consent walls (Google/Bing EU): προσπάθησε «Accept».
+    for xp in ("//button[contains(.,'Accept all')]", "//button[contains(.,'Αποδοχή')]",
+               "//button[@id='bnp_btn_accept']", "//a[@id='bnp_btn_accept']"):
+        try:
             btns = driver.find_elements(By.XPATH, xp)
             if btns:
-                btns[0].click()
-                import time as _t; _t.sleep(1.0)
-                driver.get(url)
-                break
-    except Exception:  # noqa: BLE001
-        pass
+                btns[0].click(); _t.sleep(0.6); driver.get(url); break
+        except Exception:  # noqa: BLE001
+            pass
 
-    # Bot-detection: η Google ανακατευθύνει στο /sorry (reCAPTCHA) όταν «μυρίζεται» automation.
     if "/sorry" in driver.current_url or "recaptcha" in driver.page_source.lower():
-        debug("headless: Google /sorry (bot-detection) — δες SearXNG/DuckDuckGo αντ' αυτού")
+        debug(f"headless {engine}: bot-detection wall")
         return []
 
-    # Περίμενε να render-άρει (JS) τα οργανικά αποτελέσματα πριν το parsing.
     try:
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
         WebDriverWait(driver, 8).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div#search h3")))
-    except Exception:  # noqa: BLE001 - συνέχισε· ίσως λίγα/καθόλου αποτελέσματα
-        import time as _t; _t.sleep(1.0)
+            EC.presence_of_element_located((By.CSS_SELECTOR, block_sel.split(",")[0].strip())))
+    except Exception:  # noqa: BLE001
+        _t.sleep(1.0)
 
     out: list[dict[str, str]] = []
-    try:
-        blocks = driver.find_elements(By.CSS_SELECTOR, "div.MjjYud") or \
-            driver.find_elements(By.CSS_SELECTOR, "div.tF2Cxc") or \
-            driver.find_elements(By.CSS_SELECTOR, "div.g")
-        for b in blocks:
-            try:
-                a = b.find_element(By.CSS_SELECTOR, "a[href^='http']")
-                h3 = b.find_elements(By.CSS_SELECTOR, "h3")
-                if not h3:
-                    continue
-                url_v = a.get_attribute("href") or ""
-                title = h3[0].text.strip()
-                snippet = ""
-                for sel in ("div.VwiC3b", "div[data-sncf]", "div.kb0PBd"):
-                    els = b.find_elements(By.CSS_SELECTOR, sel)
-                    if els and els[0].text.strip():
-                        snippet = els[0].text.strip()
-                        break
-                if title and url_v:
-                    out.append({"title": title, "url": url_v, "snippet": snippet})
-                if len(out) >= limit:
-                    break
-            except Exception:  # noqa: BLE001 - stale/missing element σε ένα block
+    for b in driver.find_elements(By.CSS_SELECTOR, block_sel):
+        try:
+            links = b.find_elements(By.CSS_SELECTOR, link_sel)
+            if not links:
                 continue
-    except Exception as exc:  # noqa: BLE001
-        debug(f"headless parse failed: {exc}")
+            a = links[0]
+            title = (a.text or "").strip()
+            url_v = a.get_attribute("href") or ""
+            if not title or not url_v or not url_v.startswith("http"):
+                continue
+            snippet = ""
+            for sel in snippet_sels:
+                els = b.find_elements(By.CSS_SELECTOR, sel)
+                if els and els[0].text.strip():
+                    snippet = els[0].text.strip()
+                    break
+            out.append({"title": title, "url": url_v, "snippet": snippet})
+            if len(out) >= limit:
+                break
+        except Exception:  # noqa: BLE001 - stale/missing element σε ένα block
+            continue
     return out
 
 
@@ -344,19 +345,15 @@ _TIERS = {
     "duckduckgo": _via_duckduckgo,
 }
 
-# searxng (αν self-hosted) & duckduckgo = γρήγορα/αξιόπιστα -> πρώτα. headless = πραγματικό
-# Chrome στη Google, ισχυρό fallback αλλά αργό (~4s) + η Google το rate-limit-άρει με CAPTCHA
-# (/sorry) σε επαναλαμβανόμενα queries· γι' αυτό δεν είναι πρώτο. Άλλαξέ το αν θες Google-first.
-_DEFAULT_ORDER = ["searxng", "duckduckgo", "headless", "googlesearch", "google_cse"]
+# Σειρά: searxng (αν self-hosted) & duckduckgo = γρήγορα/αξιόπιστα -> πρώτα. brave =
+# επίσημο API (με key). headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Bing/DDG), ισχυρό fallback που
+# λύνει ό,τι δεν λύνουν τα ελαφριά tiers (~3-5s). google_cse/googlesearch/openserp = extra.
+_DEFAULT_ORDER = ["searxng", "duckduckgo", "brave", "headless", "google_cse", "googlesearch", "openserp"]
 
 
 def search_web(query: str, *, limit: int = 6) -> list[dict[str, str]]:
     """Δοκιμάζει τα tiers με τη σειρά ρυθμίσεων· επιστρέφει τα πρώτα αποτελέσματα."""
-<<<<<<< HEAD
-    order = SETTINGS.get("web_search_order") or ["searxng", "openserp", "brave", "google_cse", "duckduckgo", "googlesearch"]
-=======
     order = SETTINGS.get("web_search_order") or _DEFAULT_ORDER
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     for name in order:
         fn = _TIERS.get(name)
         if fn is None:

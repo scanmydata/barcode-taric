@@ -22,31 +22,18 @@ REG_PATH = r"Software\scanmydata\BarcodeTaric"
 # Προεπιλογές ρυθμίσεων. Το settings.json υπερισχύει, το env υπερισχύει όλων.
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "dark",
-<<<<<<< HEAD
-    # OpenRouter πρώτο (δωρεάν :free μοντέλα με key). Το Groq μένει ως επιλογή αλλά
-    # θέλει login/κλειδί που δεν είναι πάντα διαθέσιμο. Τα no-key (pollinations/
-    # duckduckgo) χρεώνουν/περιορίζονται πλέον (402/429) — έσχατο fallback.
+    # custom (τοπικό ollama) πρώτο για τον χρήστη· μετά OpenRouter (:free), groq, no-key.
     "ai_provider_order": ["custom", "openrouter", "groq", "duckduckgo", "pollinations"],
-    "openrouter_model": "meta-llama/llama-3.3-70b-instruct:free",
-    "openrouter_api_key": "",
-    # Custom OpenAI-compatible endpoint (π.χ. τοπικό ollama μέσω cloudflare tunnel).
-    # Δηλώνεις μόνο το URL (base ή πλήρες /v1/chat/completions)· key προαιρετικό.
-    "custom_ai_url": "",
-    "custom_ai_key": "",
-    "custom_ai_model": "llama3.1",
-=======
-    "ai_provider_order": ["openrouter", "custom", "duckduckgo", "pollinations"],
-    # Το free-model landscape του OpenRouter αλλάζει· κράτα ένα ΕΝΕΡΓΟ default.
-    # (το παλιό llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
+    # Το free-model landscape του OpenRouter αλλάζει· κράτα ΕΝΕΡΓΟ default (το παλιό
+    # llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
     "openrouter_model": "openai/gpt-oss-20b:free",
     "openrouter_api_key": "",
-    # Custom OpenAI-συμβατό endpoint (μελλοντικό/προαιρετικό): base URL + model + key.
+    # Custom OpenAI-συμβατό endpoint (π.χ. τοπικό ollama μέσω Cloudflare tunnel).
     # Αν συμπληρωθεί το custom_ai_base_url, ο provider «custom» γίνεται διαθέσιμος.
     "custom_ai_base_url": "",   # π.χ. https://my-host/v1  ή  …/v1/chat/completions
-    "custom_ai_model": "",      # π.χ. qwen2.5:7b (Ollama μέσω Cloudflare tunnel)
+    "custom_ai_model": "llama3.1",  # π.χ. qwen2.5:7b (Ollama)
     "custom_ai_api_key": "",
     "custom_ai_timeout": 90,    # local LLM αργεί στο πρώτο token
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     "google_cse_api_key": "",
     "google_cse_id": "",
     # SearXNG meta-search (self-host ή public instance με JSON API ενεργό).
@@ -55,44 +42,32 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # — github.com/karust/openserp. Αν τρέχει, μπορείς να τον βάλεις στη σειρά ως «openserp».
     "openserp_url": "http://127.0.0.1:7000",
     "openserp_engine": "google",
-<<<<<<< HEAD
-    "openserp_timeout": 45,      # ο headless browser είναι αργός στο πρώτο query
-    # SearXNG: self-hosted μετα-μηχανή (πολλές μηχανές μαζί, χωρίς key). Ιδανικό στο
-    # μηχάνημα του τοπικού LLM. Απαιτεί `format: json` στο settings.yml του SearXNG.
-    "searxng_url": "",
+    "openserp_timeout": 45,      # ο headless browser του OpenSERP αργεί στο πρώτο query
     "searxng_timeout": 15,
-    # Σειρά web tiers. Το googlesearch-python είναι ΑΡΓΟ & rate-limited (κάνει sleep
-    # μεταξύ requests) — γι' αυτό ΔΕΝ είναι πρώτο. Προτεραιότητα: SearXNG -> OpenSERP
-    # (headless browser) -> Brave (επίσημο API) -> Google CSE -> DuckDuckGo ->
-    # googlesearch (έσχατο, αργό).
-    "web_search_order": ["searxng", "openserp", "brave", "google_cse", "duckduckgo", "googlesearch"],
-    # Δωρεάν διαδικτυακή μετάφραση EL<->EN ΧΩΡΙΣ LLM. Το MyMemory (χωρίς key) έχει
-    # μνήμη ΕΕ/ΟΗΕ — ιδανικό για τελωνειακό λεξιλόγιο. Με email ανεβαίνει το όριο.
+    # headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Chrome μέσω Selenium) — το ισχυρό fallback.
+    "headless_engine": "bing",  # bing/duckduckgo δουλεύουν με automation· google -> CAPTCHA
+    "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
+    "headless_headed": False,   # true = ορατό παράθυρο Chrome (headed)
+    # Προαιρετική χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome (cookies/consent). Το Chrome πρέπει
+    # να είναι ΚΛΕΙΣΤΟ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
+    "chrome_user_data_dir": "",
+    "chrome_profile": "",       # π.χ. "Default" ή "Profile 1" (μαζί με το user_data_dir)
+    # Σειρά web tiers: searxng/duckduckgo γρήγορα -> brave (key) -> headless (browser,
+    # ισχυρό fallback) -> google_cse/googlesearch/openserp extra.
+    "web_search_order": ["searxng", "duckduckgo", "brave", "headless", "google_cse", "googlesearch", "openserp"],
+    # Δωρεάν μετάφραση EL<->EN ΧΩΡΙΣ LLM (MyMemory — μνήμη ΕΕ/ΟΗΕ). Με email ↑ το όριο.
     "translation_provider_order": ["mymemory", "libretranslate"],
     "mymemory_email": "",           # προαιρετικό: 5000 -> 50000 chars/μέρα
     "libretranslate_url": "",       # προαιρετικό self-hosted/public instance
     "libretranslate_api_key": "",
-    # Βασική γλώσσα κατάταξης: τα αγγλικά δίνουν καλύτερα αποτελέσματα (η ΕΕ CN/HS
-    # ονοματολογία είναι τυποποιημένη στα αγγλικά). Μεταφράζουμε το query σε EN.
+    # Βασική γλώσσα κατάταξης: αγγλικά (η ΕΕ CN/HS είναι τυποποιημένη στα αγγλικά).
     "classify_in_english": True,
     "brave_api_key": "",            # Brave Search API (2000 δωρεάν queries/μήνα)
     "ocrspace_api_key": "",         # ocr.space free tier (OCR ετικέτας από φωτό προϊόντος)
-    # Τοπικά (offline) πολύγλωσσα embeddings για ΕΝΝΟΙΟΛΟΓΙΚΗ αντιστοίχιση (νόημα, όχι
-    # μόνο λέξεις). Θέλει `pip install -e ".[semantic]"` (sentence-transformers). Αν
-    # λείπει, το tier παρακάμπτεται σιωπηλά.
+    # Τοπικά (offline) πολύγλωσσα embeddings για ΕΝΝΟΙΟΛΟΓΙΚΗ αντιστοίχιση. Θέλει
+    # `pip install -e ".[semantic]"`. Αν λείπει, το tier παρακάμπτεται σιωπηλά.
     "semantic_enabled": True,
     "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-=======
-    "openserp_timeout": 45,     # ο headless browser του OpenSERP αργεί στο πρώτο query
-    # headless = πραγματικό Chrome μέσω Selenium (παρακάμπτει το Google scraping-block).
-    "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
-    "headless_headed": False,   # true = ορατό παράθυρο Chrome (λιγότερο ανιχνεύσιμο ως bot)
-    # Χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome του υπολογιστή (cookies/consent/login) ώστε η Google
-    # να μη σε περνά για bot. Άφησε κενό για καθαρό προφίλ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
-    "chrome_user_data_dir": "",
-    "chrome_profile": "",       # π.χ. "Default" ή "Profile 1" (μαζί με το user_data_dir)
-    "web_search_order": ["searxng", "duckduckgo", "headless", "googlesearch", "google_cse"],
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
     "ml_confidence_threshold": 0.55,
     "ml_min_samples": 40,
     "ml_autoretrain_every": 25,

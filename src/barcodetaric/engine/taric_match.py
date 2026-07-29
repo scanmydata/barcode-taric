@@ -173,49 +173,36 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
     query = f"{description_el} {description_en}".strip()
     if not query:
         return []
-<<<<<<< HEAD
-    rows = repo.search_taric(query, limit=60)
-    qtokens = _tokens(query)
-    preferred, penalized = _chapter_prior(source, categories)
-    # BM25 relevance co-signal: το FTS επιστρέφει best-first. Ο IDF _score μόνος του
-    # μπορεί να προωθήσει λάθος γραμμή όταν μια ΣΠΑΝΙΑ λέξη-επίθετο (π.χ. «unsalted»)
-    # ταιριάζει σε άσχετο κεφάλαιο (αποξηραμένος μπακαλιάρος) πάνω από τη λέξη-πυρήνα
-    # («butter»). Κρατώντας τη σειρά retrieval ως ήπιο bonus, δεν ακυρώνεται το BM25.
-    n = len(rows) or 1
-    scored = []
-    for idx, r in enumerate(rows):
-        base = _apply_chapter_prior(_score(qtokens, r), r, preferred, penalized)
-        if base <= 0:
-            continue
-        rel_bonus = 0.30 * (1.0 - idx / n)      # 1η θέση +0.30 → φθίνει
-        scored.append((base + rel_bonus, r))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[:top]
-=======
     # Αφαίρεσε τα brand tokens από το scoring (η μάρκα δεν είναι κριτήριο δασμολογικής κλάσης).
     brand_tokens = _tokens(brand) if brand else set()
     qtokens = _tokens(query) - brand_tokens
     if not qtokens:  # αν έμεινε μόνο η μάρκα, ξαναβάλε τα πάντα
         qtokens = _tokens(query)
 
-    # UNION retrieval: εκτός από το σύνθετο query, ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά.
-    # Το bm25 «θάβει» γενικές επικεφαλίδες (π.χ. 0401 «Γάλα») στο σύνθετο OR-query· η ανά-όρο
-    # αναζήτηση εγγυάται ότι οι γραμμές του βασικού ουσιαστικού (milk/γάλα) μπαίνουν στο pool.
-    seen: dict[str, object] = {}
-    for r in repo.search_taric(query, limit=120):
-        seen[r.code] = r
-    # Ψάξε ΚΑΘΕ σημαντικό token ξεχωριστά — ΚΑΙ το βασικό ουσιαστικό (milk/γάλα), όχι μόνο
-    # τους σπάνιους προσδιορισμούς. Αλλιώς η γενική επικεφαλίδα (0401 Γάλα) δεν μπαίνει καν στο
-    # pool, γιατί το «γάλα» είναι κοινό (χαμηλό IDF) και δεν προλαβαίνει το σύνθετο bm25 query.
+    # PRIMARY retrieval σε σειρά BM25 (η θέση δίνει relevance bonus πιο κάτω).
+    primary = repo.search_taric(query, limit=120)
+    pos = {r.code: i for i, r in enumerate(primary)}
+    pool: dict[str, object] = {r.code: r for r in primary}
+    # UNION retrieval: ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά — εγγυάται ότι το heading του
+    # ΒΑΣΙΚΟΥ ουσιαστικού (milk/γάλα, butter/βούτυρο) μπαίνει στο pool, ακόμη κι όταν το
+    # bm25 του σύνθετου query «θάβει» τη γενική επικεφαλίδα κάτω από σπάνιους προσδιορισμούς.
     for tok in list(qtokens)[:12]:
         for r in repo.search_taric(tok, limit=40):
-            seen.setdefault(r.code, r)
+            pool.setdefault(r.code, r)
 
-    scored = sorted(
-        ((_score(qtokens, r), r) for r in seen.values()), key=lambda x: x[0], reverse=True
-    )
+    # Score = IDF-coverage (_score) + BM25 relevance bonus. Το bonus κρατά τη σωστή σειρά
+    # retrieval ώστε μια ΣΠΑΝΙΑ λέξη-επίθετο (π.χ. «unsalted») να μη σπρώξει άσχετο κεφάλαιο
+    # (αποξηραμένος μπακαλιάρος) πάνω από τη λέξη-πυρήνα («butter»). union-only rows -> bonus ~0.
+    n = max(len(primary), 1)
+    scored = []
+    for code, r in pool.items():
+        s = _score(qtokens, r)
+        if s <= 0:
+            continue
+        rel_bonus = 0.30 * (1.0 - pos.get(code, n) / n)
+        scored.append((s + rel_bonus, r))
+    scored.sort(key=lambda x: x[0], reverse=True)
     return [(s, r) for s, r in scored if s > 0][:top]
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
 
 
 _FOOD_SOURCES = ("openfoodfacts", "off")
@@ -269,39 +256,24 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                confidence=pred.confidence, taric_source="ml",
                                ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
 
-<<<<<<< HEAD
-    # (γ) FTS (λέξεις) + ΕΝΝΟΙΟΛΟΓΙΚΑ embeddings (νόημα) στην ΕΕ ονοματολογία.
-    # Τα δύο tiers είναι συμπληρωματικά: το FTS πιάνει ακριβείς όρους, τα embeddings
-    # πιάνουν συνώνυμα/παραφράσεις. Τα ενώνουμε ώστε το AI να δει πλουσιότερο σύνολο.
-    cands = fts_candidates(clean_el, clean_en, top=6, source=source, categories=categories)
-    sem = embeddings.semantic_candidates(clean_combined, top=6) if clean_combined else []
-    fts_top = cands[0][0] if cands else 0.0
-    sem_top = sem[0][0] if sem else 0.0
-
-    # Guard: το semantic είναι θορυβώδες σε ονόματα προϊόντων· επιτρέπεται να «οδηγήσει»
-    # μόνο αν ΣΥΜΦΩΝΕΙ με το FTS στο HS4 (ίδιο κεφάλαιο) ή αν το FTS είναι κενό. Αλλιώς
-    # εμπιστευόμαστε το FTS (λεξιλογικά ακριβές για όρους όπως «yogurt»).
-    fts_hs4 = {(getattr(r, "hs4", "") or "")[:4] for _s, r in cands if getattr(r, "hs4", "")}
-    sem_agrees = bool(sem and (not fts_hs4 or (getattr(sem[0][1], "hs4", "") or "")[:4] in fts_hs4))
-
-    cand_dicts = _merge_candidates(cands, sem)
-=======
-    # (γ) FTS scoring στην επίσημη ΕΕ ονοματολογία (χωρίς τη μάρκα ως κριτήριο).
-    # top=8: δίνουμε περισσότερους υποψηφίους στο AI rank ώστε να υπάρχει ο σωστός ακόμη κι όταν
-    # το keyword scoring τον βάζει 3ο-8ο (π.χ. γάλα/καφές κάτω από παρόμοιες γραμμές).
-    cands = fts_candidates(description_el, description_en, brand=brand, top=8)
-    # Chapter prior: αν η πηγή είναι τρόφιμο (π.χ. OpenFoodFacts), προτίμησε κεφάλαια
-    # τροφίμων/ποτών (HS 01-24). Αλλιώς «X water» μπορεί να πέσει σε 3303 (toilet water/άρωμα)
-    # αντί 2201 (μεταλλικό νερό). Αν υπάρχει έστω ένας food υποψήφιος, κρατάμε μόνο τους food.
+    # (γ) FTS (λέξεις, union+brand-removal+BM25) + ΕΝΝΟΙΟΛΟΓΙΚΑ embeddings (νόημα).
+    # top=8: περισσότεροι υποψήφιοι για το AI rank ώστε να υπάρχει ο σωστός ακόμη κι όταν
+    # το keyword scoring τον βάζει 3ο-8ο. Χρησιμοποιούμε το καθαρισμένο query (χωρίς θόρυβο).
+    cands = fts_candidates(clean_el, clean_en, brand=brand, top=8)
+    # Chapter prior: αν η πηγή είναι τρόφιμο (OpenFoodFacts), κράτα κεφάλαια τροφίμων/ποτών
+    # (HS 01-24) — αλλιώς «X water» πέφτει σε 3303 (άρωμα) αντί 2201 (μεταλλικό νερό).
     if _is_food_source(source) and cands:
         food = [(s, r) for s, r in cands if _is_food_chapter(r.code)]
         if food:
             cands = food
-    cand_dicts = [{"code": r.code,
-                   "description_el": r.description_path_el or r.description_el,
-                   "description_en": r.description_path_en or r.description_en,
-                   "hs4": r.hs4} for _, r in cands]
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
+    sem = embeddings.semantic_candidates(clean_combined, top=6) if clean_combined else []
+    fts_top = cands[0][0] if cands else 0.0
+    sem_top = sem[0][0] if sem else 0.0
+    # Guard: το semantic είναι θορυβώδες σε ονόματα προϊόντων· «οδηγεί» μόνο αν ΣΥΜΦΩΝΕΙ με
+    # το FTS στο HS4 (ή αν το FTS είναι κενό). Αλλιώς εμπιστευόμαστε το λεξιλογικά ακριβές FTS.
+    fts_hs4 = {(getattr(r, "hs4", "") or "")[:4] for _s, r in cands if getattr(r, "hs4", "")}
+    sem_agrees = bool(sem and (not fts_hs4 or (getattr(sem[0][1], "hs4", "") or "")[:4] in fts_hs4))
+    cand_dicts = _merge_candidates(cands, sem)
 
     # (δ) AI rank + rationalization (μόνο αν διαθέσιμο & υπάρχουν υποψήφιοι)
     if use_ai and cand_dicts and ai.ai_available():

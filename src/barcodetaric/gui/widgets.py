@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-<<<<<<< HEAD
-    QAbstractItemView, QFrame, QHeaderView, QLabel, QTableWidget,
-    QVBoxLayout, QWidget,
-=======
-    QAbstractItemView, QFrame, QHeaderView, QLabel, QPushButton, QSizePolicy,
+    QAbstractItemView, QFrame, QHeaderView, QLabel, QSizePolicy,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
 )
 
 
@@ -83,31 +78,18 @@ class StatTile(QFrame):
         super().__init__(parent)
         self.setObjectName("tile")
         self.setCursor(Qt.PointingHandCursor)
-<<<<<<< HEAD
-        self.setMinimumHeight(78)
-=======
-        # Ένα QPushButton με εσωτερικό layout δεν κρατά ύψος για τα child labels -> το μεγάλο
-        # νούμερο (26px) «πατούσε» πάνω στη λεζάντα. Εγγυημένο ύψος + size policy το λύνει.
         self.setMinimumHeight(84)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
-        self._value = QLabel(value)
-<<<<<<< HEAD
         self._value.setObjectName("tileValue")
-        self._caption = QLabel(caption)
-        self._caption.setObjectName("muted")
-        self._caption.setWordWrap(True)
-=======
-        self._value.setStyleSheet("font-size: 24px; font-weight: 700; background: transparent;")
         self._value.setMinimumHeight(34)
+        self._value.setStyleSheet("font-size: 24px; font-weight: 700; background: transparent;")
         self._caption = QLabel(caption)
         self._caption.setObjectName("muted")
         self._caption.setWordWrap(True)
         self._caption.setStyleSheet("background: transparent;")
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         layout.addWidget(self._value)
         layout.addWidget(self._caption)
         layout.addStretch(1)

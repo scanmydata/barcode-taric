@@ -48,60 +48,64 @@
 χρειάζεται API key) → **custom** (προαιρετικό δικό σου endpoint) → **DuckDuckGo** → **Pollinations**.
 Το **Groq** υπάρχει ως μελλοντική (απενεργοποιημένη) επιλογή. Τα κλειδιά μπαίνουν από τη σελίδα **Ρυθμίσεις**.
 
-<<<<<<< HEAD
+> ⚠️ **Το free-model landscape του OpenRouter αλλάζει** — μοντέλα αποσύρονται και το API επιστρέφει
+> `404`. Το app κάνει **auto-fallback** (working → `openai/gpt-oss-20b:free` → `openrouter/free`) και
+> «θυμάται» αυτό που δουλεύει. Στις **Ρυθμίσεις**: «Έξυπνη επιλογή» + «Λίστα μοντέλων». Default:
+> `openai/gpt-oss-20b:free`.
+
 ## Δωρεάν μετάφραση (χωρίς LLM) & English-first
 
-Η κατάταξη TARIC δουλεύει καλύτερα στα **Αγγλικά** (η ΕΕ CN/HS ονοματολογία είναι
-τυποποιημένη στα αγγλικά). Γι' αυτό, πριν την αντιστοίχιση, το ελληνικό query
-μεταφράζεται σε αγγλικά μέσω **δωρεάν διαδικτυακού μεταφραστικού** — **χωρίς** εξάρτηση
-από LLM (γρήγορο & ντετερμινιστικό):
+Η κατάταξη TARIC δουλεύει καλύτερα στα **Αγγλικά** (η ΕΕ CN/HS ονοματολογία είναι τυποποιημένη
+στα αγγλικά). Πριν την αντιστοίχιση, το ελληνικό query μεταφράζεται σε αγγλικά μέσω **δωρεάν
+διαδικτυακού μεταφραστικού** — χωρίς εξάρτηση από LLM (γρήγορο, ντετερμινιστικό):
 
-- **[MyMemory](https://mymemory.translated.net/)** (προεπιλογή, **χωρίς key**): τεράστια
-  μεταφραστική μνήμη με έμφαση σε κείμενα **ΕΕ/ΟΗΕ** — ακριβώς το τελωνειακό/εμπορικό
-  λεξιλόγιο. Όριο 5000 chars/μέρα (→ 50000 με προαιρετικό email στις **Ρυθμίσεις**).
+- **[MyMemory](https://mymemory.translated.net/)** (προεπιλογή, **χωρίς key**): μεταφραστική μνήμη
+  με έμφαση σε κείμενα **ΕΕ/ΟΗΕ** — ακριβώς το τελωνειακό λεξιλόγιο. 5000 chars/μέρα (→ 50000 με email).
 - **[LibreTranslate](https://libretranslate.com/)** (προαιρετικό, self-hosted/instance).
 
-Αν όλα αποτύχουν, γίνεται fallback στο LLM. Η επιλογή «Κατάταξη με βασική γλώσσα τα
-Αγγλικά» ελέγχεται από τις **Ρυθμίσεις** (`classify_in_english`).
+Αν όλα αποτύχουν → fallback στο LLM. Ελέγχεται από `classify_in_english` στις **Ρυθμίσεις**.
 
-## Πραγματικά Google results (γιατί «αργεί» η αναζήτηση)
+## Custom AI endpoint (local LLM / ollama)
 
-Η αναζήτηση δεν αργεί επειδή «δεν χρησιμοποιεί browser» — αργεί όταν πέφτει στο
-**googlesearch-python**, που κάνει scraping με **sleep μεταξύ requests** και
-rate-limiting. Γι' αυτό οι tiers είναι πλέον με σειρά ταχύτητας/αξιοπιστίας:
+Στις **Ρυθμίσεις → Custom AI endpoint** ορίζεις **δικό σου OpenAI-συμβατό endpoint** (Base URL,
+μοντέλο, προαιρετικό key, timeout) και βάζεις `custom` πρώτο στη σειρά providers. Δεν περιορίζεται σε `:free`.
 
-1. **[OpenSERP](https://github.com/karust/openserp)** — τοπικός server με **headless browser**,
-   πραγματικά Google αποτελέσματα **χωρίς API key**. Εκκίνηση:
-   ```sh
-   docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000
-   ```
-   (προεπιλογή `http://127.0.0.1:7000`, ρυθμίζεται στις **Ρυθμίσεις**).
-2. **[Brave Search API](https://brave.com/search/api/)** — επίσημο, **γρήγορο**, δομημένο JSON,
-   ~**2000 δωρεάν queries/μήνα** με key.
-3. **Google CSE** (100/μέρα δωρεάν, με key+cse_id).
-4. **DuckDuckGo HTML** (χωρίς key/όρια).
-5. **googlesearch-python** — έσχατο, αργό/rate-limited.
-
-Όλα τα tiers κάνουν σιωπηλά fallback στο επόμενο αν αποτύχουν. Τα αποτελέσματα
-τροφοδοτούν το cross-check ταυτότητας (και χωρίς AI, μέσω corroboration score) + το AI.
-
-## Τοπικό LLM (ollama) + SearXNG
-
-Για δικό σου **self-hosted LLM** (π.χ. ollama μέσω cloudflare tunnel), πρόσθεσε τον
-`custom` provider στις **Ρυθμίσεις → AI**: βάλε το **Custom endpoint URL** (base ή πλήρες
-`/v1/chat/completions`), model και προαιρετικό key, και φέρε το `custom` πρώτο στη
-**Σειρά providers**. Είναι OpenAI-compatible, οπότε δουλεύει με το `/v1` του ollama.
-
-Για **πολλαπλές αναζητήσεις χωρίς rate-limit**, στήσε **SearXNG** (μετα-μηχανή) στο ίδιο
-μηχάνημα και βάλε το URL στις **Ρυθμίσεις → Web search → SearXNG URL**. Πρέπει να έχει
-ενεργό το JSON format (`search.formats: [html, json]` στο `settings.yml`).
-
-**SearXNG με Docker:**
-```sh
-docker run --rm -d -p 8080:8080 -v ./searxng:/etc/searxng searxng/searxng:latest
+**Παράδειγμα — Ollama (qwen) μέσω Cloudflare tunnel:**
+```bash
+ollama serve                                      # OpenAI API στο :11434
+ollama pull qwen2.5:7b
+cloudflared tunnel --url http://localhost:11434   # -> https://xxx.trycloudflare.com
 ```
+Στις Ρυθμίσεις: **Base URL** = `https://xxx.trycloudflare.com/v1` (το `/chat/completions` προστίθεται
+αυτόματα), **Μοντέλο** = `qwen2.5:7b`, **Timeout** ~120s (local LLM αργεί στο πρώτο token).
 
-**SearXNG χωρίς Docker** (π.χ. στο μηχάνημα του ollama):
+## Web search (γιατί «αργεί» & πώς φέρνουμε σωστά αποτελέσματα)
+
+Η αναζήτηση δεν αργεί επειδή «δεν χρησιμοποιεί browser» — αργεί όταν πέφτει στο **googlesearch-python**
+(scraping με sleep + rate-limit). Οι tiers είναι με σειρά ταχύτητας/αξιοπιστίας (`web_search_order`,
+default `searxng → duckduckgo → brave → headless → google_cse → googlesearch → openserp`):
+
+1. **[SearXNG](https://github.com/searxng/searxng)** — meta-search (JSON API, χωρίς key). Όρισε
+   `searxng_url` (self-host `http://127.0.0.1:8888` **προτείνεται**). Ίδιο endpoint με το mcp-searxng.
+2. **DuckDuckGo HTML** — γρήγορο, χωρίς key/όρια.
+3. **[Brave Search API](https://brave.com/search/api/)** — επίσημο JSON, ~2000 δωρεάν queries/μήνα (key).
+4. **headless browser** — **ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium** που εκτελεί JS· το **ισχυρό fallback**
+   που λύνει ό,τι δεν λύνουν τα ελαφριά tiers. `pip install -e ".[headless]"` + εγκατεστημένο Chrome.
+   Μηχανή από `headless_engine`: **Bing** (default) & **DuckDuckGo** δουλεύουν με automation· η **Google**
+   ζητά CAPTCHA (`/sorry`). `headless_headed=true` = ορατό παράθυρο· προαιρετικά χρήση πραγματικού
+   προφίλ Chrome (cookies/consent) — **κλείσε το Chrome πρώτα**.
+5. **Google CSE** (100/μέρα δωρεάν, με key+cse_id) · **googlesearch-python** (έσχατο) · **OpenSERP** (docker).
+
+Όλα κάνουν σιωπηλά fallback στο επόμενο. Τα αποτελέσματα τροφοδοτούν το cross-check ταυτότητας (και
+χωρίς AI, μέσω corroboration score) + το AI enrichment. Debug: **Ρυθμίσεις → Έλεγχος web search**.
+
+### SearXNG setup (για το μηχάνημα του ollama)
+
+**Με Docker:**
+```sh
+docker run --rm -d -p 8888:8080 searxng/searxng:latest
+```
+**Χωρίς Docker:**
 ```sh
 git clone https://github.com/searxng/searxng && cd searxng
 python -m venv venv && . venv/bin/activate        # Windows: venv\Scripts\activate
@@ -110,6 +114,7 @@ pip install --use-pep517 --no-build-isolation -e .
 export SEARXNG_SETTINGS_PATH=$PWD/searx/settings.yml   # πρόσθεσε 'json' στο formats
 python -m searx.webapp                             # http://127.0.0.1:8888
 ```
+Στο `settings.yml`, το `search.formats` πρέπει να περιλαμβάνει `json`.
 
 **mcp-searxng** (ώστε το τοπικό LLM να κάνει μόνο του αναζητήσεις μέσω MCP):
 ```json
@@ -121,69 +126,9 @@ python -m searx.webapp                             # http://127.0.0.1:8888
 
 ## OCR ετικέτας (προαιρετικό)
 
-Όταν οι δομημένες πηγές barcode δεν δίνουν αξιόπιστη ονομασία αλλά υπάρχει **φωτό
-προϊόντος** (π.χ. από OpenFoodFacts), η εφαρμογή μπορεί να διαβάσει το κείμενο της
-ετικέτας με OCR ([ocr.space](https://ocr.space/ocrapi), δωρεάν tier με key) και να το
-τροφοδοτήσει στην αναγνώριση/κατάταξη. Το key μπαίνει στις **Ρυθμίσεις → Μετάφραση & OCR**.
-Χωρίς key, το βήμα παρακάμπτεται σιωπηλά.
-=======
-> ⚠️ **Το free-model landscape του OpenRouter αλλάζει συχνά** — μοντέλα αποσύρονται και το API
-> επιστρέφει `404`. Το app το χειρίζεται **αυτόματα**: αν το ρυθμισμένο μοντέλο αποτύχει (404),
-> δοκιμάζει εναλλακτικά (`openai/gpt-oss-20b:free` → `openrouter/free`) και «θυμάται» αυτό που
-> δουλεύει για τη session. Στις **Ρυθμίσεις** υπάρχει **«Έξυπνη επιλογή»** που δοκιμάζει τα κορυφαία
-> δωρεάν μοντέλα και επιλέγει ένα που απαντά, καθώς και **«Λίστα μοντέλων»** (φιλτραρισμένα chat
-> μοντέλα, χωρίς audio/image/embeddings). Default: `openai/gpt-oss-20b:free`.
-
-### Custom AI endpoint (local LLM / on-prem)
-
-Στις **Ρυθμίσεις → Custom AI endpoint** ορίζεις **δικό σου OpenAI-συμβατό endpoint** (Base URL,
-μοντέλο, προαιρετικό key, timeout). Βάλε `custom` στη σειρά providers. Δεν περιορίζεται σε `:free`.
-
-**Παράδειγμα — Ollama (qwen) μέσω Cloudflare tunnel:**
-
-```bash
-ollama serve                                   # τοπικό Ollama (OpenAI API στο :11434)
-ollama pull qwen2.5:7b
-cloudflared tunnel --url http://localhost:11434   # δίνει https://xxx.trycloudflare.com
-```
-
-Στις Ρυθμίσεις: **Base URL** = `https://xxx.trycloudflare.com/v1` (το `/chat/completions`
-προστίθεται αυτόματα), **Μοντέλο** = `qwen2.5:7b`, **API key** κενό, **Timeout** ~120s (local LLM
-αργεί στο πρώτο token).
-
-## Web search (SearXNG + headless Chrome + fallbacks)
-
-Τα web results έρχονται σε επίπεδα (`web_search_order`, default:
-`searxng → duckduckgo → headless → googlesearch → google_cse`):
-
-1. **SearXNG** — meta-search ([searxng/searxng](https://github.com/searxng/searxng)) με JSON API.
-   Όρισε `searxng_url` στις Ρυθμίσεις (self-host `http://127.0.0.1:8888` **προτείνεται** — πολλά public
-   instances κλείνουν το `format=json`). Ίδιο endpoint με το [mcp-searxng](https://github.com/ihor-sokoliuk/mcp-searxng).
-2. **DuckDuckGo HTML** — γρήγορο & αξιόπιστο fallback χωρίς key/όρια.
-3. **headless Chrome (Google)** — πραγματικό Chrome μέσω **Selenium** που εκτελεί JS και διαβάζει τα
-   οργανικά αποτελέσματα της Google (παρακάμπτει το block του απλού scraping). Θέλει
-   `pip install -e ".[headless]"` + εγκατεστημένο Chrome. ⚠️ Η Google **rate-limit-άρει** με CAPTCHA
-   (`/sorry`) σε πολλά διαδοχικά queries — τότε το tier επιστρέφει κενό και πέφτει σε DuckDuckGo.
-   Για Google-first, βάλε `headless` πρώτο στη «Σειρά web tiers»· `headless_headed=true` = ορατό
-   παράθυρο (λιγότερο ανιχνεύσιμο ως bot).
-4. **googlesearch-python** — απλό scraping (η Google συχνά το μπλοκάρει → κενά αποτελέσματα).
-5. **Google CSE JSON API** — αν έχεις `google_cse_api_key` + `google_cse_id` (100 queries/μέρα δωρεάν).
-
-Το web search χρησιμοποιείται και **στη λήψη περιγραφής από barcode**: αφού μια δομημένη πηγή
-(OpenFoodFacts κ.λπ.) δώσει όνομα, γίνεται αναζήτηση στο web **με το όνομα** και τα snippets
-τροφοδοτούν το AI enrichment για ακριβέστερη περιγραφή → καλύτερο TARIC.
-
-Debug: **Ρυθμίσεις → Debugger → Έλεγχος web search** δείχνει ποιο tier απαντά.
-
-### Self-host SearXNG (προαιρετικό, με Docker)
-
-```bash
-docker run -d --name searxng -p 8888:8080 \
-  -e "SEARXNG_BASE_URL=http://localhost:8888/" searxng/searxng
-```
-
-Στο `settings.yml` του instance βεβαιώσου ότι το `search.formats` περιλαμβάνει `json`.
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
+Όταν οι δομημένες πηγές barcode δεν δίνουν αξιόπιστη ονομασία αλλά υπάρχει **φωτό προϊόντος**,
+η εφαρμογή διαβάζει το κείμενο της ετικέτας με OCR ([ocr.space](https://ocr.space/ocrapi), δωρεάν
+tier με key) και το τροφοδοτεί στην αναγνώριση/κατάταξη. Key στις **Ρυθμίσεις → Μετάφραση & OCR**.
 
 ## Εκτέλεση (dev)
 

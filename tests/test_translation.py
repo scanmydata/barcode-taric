@@ -100,7 +100,7 @@ def test_custom_endpoint_url_normalization(monkeypatch):
     }
     for given, expected in cases.items():
         monkeypatch.setattr(ai.SETTINGS, "get",
-                            lambda k, d=None, _g=given: _g if k == "custom_ai_url" else "")
+                            lambda k, d=None, _g=given: _g if k == "custom_ai_base_url" else "")
         assert ai._custom_endpoint_url() == expected
 
 

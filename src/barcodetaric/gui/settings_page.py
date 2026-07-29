@@ -70,24 +70,13 @@ class SettingsPage(QWidget):
         self.groq_key = QLineEdit(str(SETTINGS.get("groq_api_key") or ""))
         self.groq_key.setEchoMode(QLineEdit.Password)
         self.groq_key.setPlaceholderText("gsk_… (προαιρετικό)")
-        # Custom OpenAI-compatible endpoint (τοπικό ollama μέσω cloudflare tunnel).
-        self.custom_url = QLineEdit(str(SETTINGS.get("custom_ai_url") or ""))
-        self.custom_url.setPlaceholderText("https://ollama.mydomain.com  (ή …/v1/chat/completions)")
-        self.custom_model = QLineEdit(str(SETTINGS.get("custom_ai_model") or ""))
-        self.custom_model.setPlaceholderText("llama3.1 / qwen2.5 …")
-        self.custom_key = QLineEdit(str(SETTINGS.get("custom_ai_key") or ""))
-        self.custom_key.setEchoMode(QLineEdit.Password)
-        self.custom_key.setPlaceholderText("προαιρετικό (τοπικός server δεν χρειάζεται)")
         ai_l.addRow("OpenRouter API key", self.openrouter_key)
         ai_l.addRow("Μοντέλο (:free)", model_row)
         ai_l.addRow("", muted("Συνιστώμενο: OpenRouter με δωρεάν μοντέλο (:free προστίθεται αυτόματα). "
                               "Τα no-key (Pollinations/DuckDuckGo) πλέον χρεώνουν/περιορίζονται (402/429)."))
         ai_l.addRow("Groq API key (προαιρ.)", self.groq_key)
-        ai_l.addRow("Custom endpoint URL", self.custom_url)
-        ai_l.addRow("Custom μοντέλο", self.custom_model)
-        ai_l.addRow("Custom key (προαιρ.)", self.custom_key)
-        ai_l.addRow("", muted("Custom = OpenAI-compatible endpoint για δικό σου local LLM "
-                              "(π.χ. ollama μέσω cloudflare tunnel). Βάλε 'custom' πρώτο στη σειρά providers."))
+        ai_l.addRow("", muted("Για δικό σου local LLM (ollama μέσω cloudflare tunnel) δες την κάρτα "
+                              "«Custom AI endpoint» παρακάτω & βάλε 'custom' πρώτο στη σειρά providers."))
         ai_l.addRow("Σειρά providers", self.provider_order)
         root.addWidget(ai_card)
 
@@ -96,42 +85,33 @@ class SettingsPage(QWidget):
         web_l = QFormLayout(web_card)
         web_l.setContentsMargins(18, 16, 18, 16)
         web_l.setSpacing(10)
-<<<<<<< HEAD
-        web_l.addRow(h2("Web search (Google results)"))
-        web_l.addRow("", muted("SearXNG → OpenSERP → Brave → Google CSE → DuckDuckGo → googlesearch. "
-                               "Το googlesearch είναι αργό/rate-limited — γι' αυτό τελευταίο."))
+        web_l.addRow(h2("Web search"))
+        web_l.addRow("", muted("SearXNG → DuckDuckGo → Brave → headless browser → Google CSE → googlesearch. "
+                               "Το headless (Chrome) είναι το ισχυρό fallback που λύνει ό,τι δεν λύνουν τα άλλα."))
         self.searxng_url = QLineEdit(str(SETTINGS.get("searxng_url") or ""))
-        self.searxng_url.setPlaceholderText("http://127.0.0.1:8080 (self-hosted SearXNG, format=json)")
+        self.searxng_url.setPlaceholderText("http://127.0.0.1:8888 (self-hosted SearXNG, format=json)")
         web_l.addRow("SearXNG URL", self.searxng_url)
-        web_l.addRow("", muted("Μετα-μηχανή (πολλές μηχανές μαζί, χωρίς key). Θέλει `format: json` "
-                               "στο settings.yml. Ιδανικό στο μηχάνημα του τοπικού LLM."))
+        web_l.addRow("", muted("Μετα-μηχανή (πολλές μηχανές μαζί, χωρίς key). Θέλει `format: json` στο settings.yml."))
         self.openserp_url = QLineEdit(str(SETTINGS.get("openserp_url") or ""))
-        self.openserp_url.setPlaceholderText("http://127.0.0.1:7000 (τοπικός OpenSERP server)")
+        self.openserp_url.setPlaceholderText("http://127.0.0.1:7000 (προαιρ. OpenSERP server)")
         web_l.addRow("OpenSERP URL", self.openserp_url)
-        web_l.addRow("", muted("Πραγματικά Google αποτελέσματα χωρίς key μέσω headless browser. Εκκίνηση:  "
-                               "docker run --rm -p 127.0.0.1:7000:7000 karust/openserp:latest serve -a 0.0.0.0 -p 7000"))
         self.brave_key = QLineEdit(str(SETTINGS.get("brave_api_key") or ""))
         self.brave_key.setEchoMode(QLineEdit.Password)
-        self.brave_key.setPlaceholderText("Brave Search API key — 2000 δωρεάν queries/μήνα (γρήγορο)")
+        self.brave_key.setPlaceholderText("Brave Search API key — 2000 δωρεάν queries/μήνα")
         web_l.addRow("Brave API key (προαιρ.)", self.brave_key)
-=======
-        web_l.addRow(h2("Web search"))
-        web_l.addRow("", muted("SearXNG → DuckDuckGo → headless Chrome (Google) → googlesearch → CSE"))
-        self.searxng_url = QLineEdit(str(SETTINGS.get("searxng_url") or ""))
-        self.searxng_url.setPlaceholderText("https://searx.example.org  ή  http://127.0.0.1:8888")
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         self.cse_key = QLineEdit(str(SETTINGS.get("google_cse_api_key") or ""))
         self.cse_key.setEchoMode(QLineEdit.Password)
         self.cse_id = QLineEdit(str(SETTINGS.get("google_cse_id") or ""))
+        web_l.addRow("Google CSE key (προαιρ.)", self.cse_key)
+        web_l.addRow("Google CSE id (προαιρ.)", self.cse_id)
         self.web_order = QLineEdit(", ".join(SETTINGS.get("web_search_order") or []))
-        web_l.addRow("SearXNG URL", self.searxng_url)
-        web_l.addRow("", muted("SearXNG instance με ενεργό JSON API (self-host προτείνεται)."))
-        web_l.addRow("Google CSE key", self.cse_key)
-        web_l.addRow("Google CSE id", self.cse_id)
         web_l.addRow("Σειρά web tiers", self.web_order)
-        self.headless_headed = QCheckBox("Ορατό παράθυρο Chrome")
-        self.headless_headed.setToolTip("Το headless Chrome είναι πιο εύκολα ανιχνεύσιμο ως bot· "
-                                        "με ορατό παράθυρο η Google μπλοκάρει λιγότερο.")
+        # --- headless browser: το ισχυρό fallback (πραγματικός Chrome) ---
+        self.headless_engine = QComboBox()
+        self.headless_engine.addItems(["bing", "duckduckgo", "google"])
+        self.headless_engine.setCurrentText(str(SETTINGS.get("headless_engine", "bing")))
+        web_l.addRow("Headless μηχανή", self.headless_engine)
+        self.headless_headed = QCheckBox("Ορατό παράθυρο Chrome (headed)")
         self.headless_headed.setChecked(bool(SETTINGS.get("headless_headed")))
         web_l.addRow("", self.headless_headed)
         self.chrome_user_dir = QLineEdit(str(SETTINGS.get("chrome_user_data_dir") or ""))
@@ -140,13 +120,10 @@ class SettingsPage(QWidget):
         self.chrome_profile.setPlaceholderText("Default ή Profile 1 (προαιρ.)")
         web_l.addRow("Chrome προφίλ (φάκελος)", self.chrome_user_dir)
         web_l.addRow("Chrome profile", self.chrome_profile)
-        web_l.addRow("", muted("Χρήση του πραγματικού προφίλ Chrome (cookies/consent) μειώνει το "
-                               "anti-bot. ΠΡΟΣΟΧΗ: κλείσε το Chrome πριν την αναζήτηση."))
-        web_l.addRow("", muted("Το «headless» tier θέλει selenium + Chrome. Η Google μπορεί να ζητήσει "
-                               "CAPTCHA (/sorry) σε συχνά queries — τότε πέφτει σε DuckDuckGo."))
+        web_l.addRow("", muted("Το «headless» tier θέλει selenium + Chrome (pip install -e \".[headless]\"). "
+                               "Bing/DuckDuckGo δουλεύουν με automation· η Google ζητά CAPTCHA."))
         root.addWidget(web_card)
 
-<<<<<<< HEAD
         # --- Μετάφραση & OCR ---
         tr_card = Card()
         tr_l = QFormLayout(tr_card)
@@ -177,7 +154,7 @@ class SettingsPage(QWidget):
         self.ocr_key.setPlaceholderText("ocr.space API key — OCR ετικέτας από φωτό προϊόντος")
         tr_l.addRow("OCR (ocr.space) key (προαιρ.)", self.ocr_key)
         root.addWidget(tr_card)
-=======
+
         # --- Custom AI endpoint (μελλοντικό/on-prem) ---
         custom_card = Card()
         custom_l = QFormLayout(custom_card)
@@ -202,7 +179,6 @@ class SettingsPage(QWidget):
         custom_l.addRow("API key (προαιρ.)", self.custom_key)
         custom_l.addRow("Timeout", self.custom_timeout)
         root.addWidget(custom_card)
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
 
         # --- ΓΕΜΗ / TARIC / εμφάνιση ---
         misc_card = Card()
@@ -329,40 +305,33 @@ class SettingsPage(QWidget):
         SETTINGS.set("openrouter_api_key", self.openrouter_key.text().strip())
         SETTINGS.set("openrouter_model", ai._ensure_free(self.openrouter_model.currentText().strip()))
         order = [p.strip() for p in self.provider_order.text().split(",") if p.strip()]
-<<<<<<< HEAD
-        SETTINGS.set("ai_provider_order", order or ["custom", "openrouter", "groq", "duckduckgo", "pollinations"])
+        SETTINGS.set("ai_provider_order", order or list(ai._DEFAULT_ORDER))
         SETTINGS.set("groq_api_key", self.groq_key.text().strip())
-        SETTINGS.set("custom_ai_url", self.custom_url.text().strip())
-        SETTINGS.set("custom_ai_model", self.custom_model.text().strip() or "llama3.1")
-        SETTINGS.set("custom_ai_key", self.custom_key.text().strip())
-        SETTINGS.set("openserp_url", self.openserp_url.text().strip() or "http://127.0.0.1:7000")
+        # web search
         SETTINGS.set("searxng_url", self.searxng_url.text().strip())
+        SETTINGS.set("openserp_url", self.openserp_url.text().strip() or "http://127.0.0.1:7000")
         SETTINGS.set("brave_api_key", self.brave_key.text().strip())
         SETTINGS.set("google_cse_api_key", self.cse_key.text().strip())
         SETTINGS.set("google_cse_id", self.cse_id.text().strip())
+        web_order = [t.strip() for t in self.web_order.text().split(",") if t.strip()]
+        from ..engine import web_search
+        SETTINGS.set("web_search_order", web_order or list(web_search._DEFAULT_ORDER))
+        SETTINGS.set("headless_engine", self.headless_engine.currentText())
+        SETTINGS.set("headless_headed", self.headless_headed.isChecked())
+        SETTINGS.set("chrome_user_data_dir", self.chrome_user_dir.text().strip())
+        SETTINGS.set("chrome_profile", self.chrome_profile.text().strip())
+        # custom AI endpoint (ollama)
+        SETTINGS.set("custom_ai_base_url", self.custom_url.text().strip())
+        SETTINGS.set("custom_ai_model", self.custom_model.text().strip())
+        SETTINGS.set("custom_ai_api_key", self.custom_key.text().strip())
+        SETTINGS.set("custom_ai_timeout", float(self.custom_timeout.value()))
+        # μετάφραση / semantic / OCR
         SETTINGS.set("classify_in_english", self.classify_en.isChecked())
         SETTINGS.set("semantic_enabled", self.semantic_on.isChecked())
         SETTINGS.set("mymemory_email", self.mymemory_email.text().strip())
         SETTINGS.set("libretranslate_url", self.libre_url.text().strip())
         SETTINGS.set("libretranslate_api_key", self.libre_key.text().strip())
         SETTINGS.set("ocrspace_api_key", self.ocr_key.text().strip())
-=======
-        SETTINGS.set("ai_provider_order", order or list(ai._DEFAULT_ORDER))
-        SETTINGS.set("groq_api_key", self.groq_key.text().strip())
-        SETTINGS.set("searxng_url", self.searxng_url.text().strip())
-        SETTINGS.set("google_cse_api_key", self.cse_key.text().strip())
-        SETTINGS.set("google_cse_id", self.cse_id.text().strip())
-        web_order = [t.strip() for t in self.web_order.text().split(",") if t.strip()]
-        from ..engine import web_search
-        SETTINGS.set("web_search_order", web_order or list(web_search._DEFAULT_ORDER))
-        SETTINGS.set("headless_headed", self.headless_headed.isChecked())
-        SETTINGS.set("chrome_user_data_dir", self.chrome_user_dir.text().strip())
-        SETTINGS.set("chrome_profile", self.chrome_profile.text().strip())
-        SETTINGS.set("custom_ai_base_url", self.custom_url.text().strip())
-        SETTINGS.set("custom_ai_model", self.custom_model.text().strip())
-        SETTINGS.set("custom_ai_api_key", self.custom_key.text().strip())
-        SETTINGS.set("custom_ai_timeout", float(self.custom_timeout.value()))
->>>>>>> b69f1c064e06f3062b3591fa58b396eb91ebe117
         SETTINGS.set("business_portal_key", self.business_key.text().strip())
         SETTINGS.set("auto_update_taric", self.auto_update.isChecked())
         SETTINGS.set("ml_confidence_threshold", float(self.threshold.value()))
