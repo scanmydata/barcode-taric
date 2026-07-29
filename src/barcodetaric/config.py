@@ -46,15 +46,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "searxng_timeout": 15,
     # headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Chrome μέσω Selenium) — το ισχυρό fallback.
     "headless_engine": "bing",  # bing/duckduckgo δουλεύουν με automation· google -> CAPTCHA
+    # cloudscraper / anti-bot: χρήση του VeNoMouS/cloudscraper για Cloudflare/anti-bot pages.
+    "cloudscraper_enabled": True,
+    "cloudscraper_timeout": 20,
+    "cloudscraper_browser": "chrome",
+    "captcha_solver": "none",  # none|cloudscraper|capsolver|2captcha
+    "captcha_provider_api_key": "",
     "chrome_binary": "",        # προαιρετικό override διαδρομής chrome.exe
     "headless_headed": False,   # true = ορατό παράθυρο Chrome (headed)
     # Προαιρετική χρήση του ΠΡΑΓΜΑΤΙΚΟΥ προφίλ Chrome (cookies/consent). Το Chrome πρέπει
     # να είναι ΚΛΕΙΣΤΟ. π.χ. %LOCALAPPDATA%\Google\Chrome\User Data
     "chrome_user_data_dir": "",
     "chrome_profile": "",       # π.χ. "Default" ή "Profile 1" (μαζί με το user_data_dir)
-    # Σειρά web tiers: searxng/duckduckgo γρήγορα -> brave (key) -> headless (browser,
-    # ισχυρό fallback) -> google_cse/googlesearch/openserp extra.
-    "web_search_order": ["searxng", "duckduckgo", "brave", "headless", "google_cse", "googlesearch", "openserp"],
+    # Σειρά web tiers: searxng/duckduckgo γρήγορα -> brave (key) -> cloudscraper/anti-bot
+    # -> headless (browser, ισχυρό fallback) -> google_cse/googlesearch/openserp extra.
+    "web_search_order": ["searxng", "duckduckgo", "brave", "cloudscraper", "headless", "google_cse", "googlesearch", "openserp"],
     # Δωρεάν μετάφραση EL<->EN ΧΩΡΙΣ LLM (MyMemory — μνήμη ΕΕ/ΟΗΕ). Με email ↑ το όριο.
     "translation_provider_order": ["mymemory", "libretranslate"],
     "mymemory_email": "",           # προαιρετικό: 5000 -> 50000 chars/μέρα

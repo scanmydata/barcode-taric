@@ -25,11 +25,114 @@ import urllib.error
 import urllib.parse
 from typing import Any
 
+import requests
+
 from ..config import SETTINGS
 from .http_util import BROWSER_UA, debug, http_json, http_text, strip_tags
 
 
 _HEADLESS_DRIVER = None  # cache του Selenium driver (ακριβό να ανοίγει κάθε φορά)
+
+
+def _try_import_cloudscraper():
+    try:
+        import cloudscraper  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    return cloudscraper
+
+
+def _try_import_curl_cffi():
+    try:
+        import curl_cffi  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    return curl_cffi
+
+
+def _build_http_headers() -> dict[str, str]:
+    headers = {
+        "User-Agent": BROWSER_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.google.com/",
+    }
+    return headers
+
+
+def _via_cloudscraper(query: str, limit: int) -> list[dict[str, str]]:
+    """Optional Cloudflare/anti-bot tier powered by cloudscraper + requests fallback."""
+    if not bool(SETTINGS.get("cloudscraper_enabled", True)):
+        return []
+    scraper = _try_import_cloudscraper()
+    if scraper is None:
+        debug("cloudscraper not installed; skipping anti-bot tier")
+        return []
+    scraper_kwargs: dict[str, Any] = {"browser": SETTINGS.get("cloudscraper_browser") or "chrome"}
+    captcha_solver = (SETTINGS.get("captcha_solver") or "none").strip().lower()
+    if captcha_solver in {"capsolver", "2captcha", "anticaptcha", "capmonster", "deathbycaptcha", "9kw"}:
+        api_key = (SETTINGS.get("captcha_provider_api_key") or "").strip()
+        if api_key:
+            provider_name = "capsolver" if captcha_solver == "capsolver" else captcha_solver
+            scraper_kwargs["captcha"] = {"provider": provider_name, "api_key": api_key}
+    try:
+        session = scraper.create_scraper(**scraper_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        debug(f"cloudscraper init failed: {exc}")
+        return []
+    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+    try:
+        response = session.get(url, timeout=int(SETTINGS.get("cloudscraper_timeout") or 20), headers=_build_http_headers())
+        response.raise_for_status()
+        html_text = response.text
+    except Exception as exc:  # noqa: BLE001
+        debug(f"cloudscraper request failed: {exc}")
+        return []
+    results: list[dict[str, str]] = []
+    blocks = re.findall(r'<div[^>]*class=["\']result[^"\']*["\'][^>]*>(.*?)</div>\s*</div>', html_text, re.S | re.I)
+    for block in blocks[:limit]:
+        title_m = re.search(r'class=["\']result__a["\'][^>]*>(.*?)</a>', block, re.S | re.I)
+        snip_m = re.search(r'class=["\']result__snippet["\'][^>]*>(.*?)</a>', block, re.S | re.I)
+        url_m = re.search(r'href=["\'](https?://[^"\']+)["\']', block, re.I)
+        results.append({
+            "title": strip_tags(title_m.group(1)) if title_m else "",
+            "url": url_m.group(1) if url_m else "",
+            "snippet": strip_tags(snip_m.group(1)) if snip_m else "",
+        })
+    return results
+
+
+def _via_curl_cffi(query: str, limit: int) -> list[dict[str, str]]:
+    """Optional browser-fingerprint tier using curl_cffi impersonation."""
+    if not bool(SETTINGS.get("cloudscraper_enabled", True)):
+        return []
+    curl_mod = _try_import_curl_cffi()
+    if curl_mod is None:
+        return []
+    try:
+        response = curl_mod.get(
+            "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query),
+            impersonate=SETTINGS.get("cloudscraper_browser") or "chrome",
+            timeout=int(SETTINGS.get("cloudscraper_timeout") or 20),
+            headers=_build_http_headers(),
+        )
+        html_text = response.text
+    except Exception as exc:  # noqa: BLE001
+        debug(f"curl_cffi request failed: {exc}")
+        return []
+    results: list[dict[str, str]] = []
+    blocks = re.findall(r'<div[^>]*class=["\']result[^"\']*["\'][^>]*>(.*?)</div>\s*</div>', html_text, re.S | re.I)
+    for block in blocks[:limit]:
+        title_m = re.search(r'class=["\']result__a["\'][^>]*>(.*?)</a>', block, re.S | re.I)
+        snip_m = re.search(r'class=["\']result__snippet["\'][^>]*>(.*?)</a>', block, re.S | re.I)
+        url_m = re.search(r'href=["\'](https?://[^"\']+)["\']', block, re.I)
+        results.append({
+            "title": strip_tags(title_m.group(1)) if title_m else "",
+            "url": url_m.group(1) if url_m else "",
+            "snippet": strip_tags(snip_m.group(1)) if snip_m else "",
+        })
+    return results
 
 
 def _headless_driver():
@@ -339,6 +442,8 @@ _TIERS = {
     "searxng": _via_searxng,
     "openserp": _via_openserp,
     "brave": _via_brave,
+    "cloudscraper": _via_cloudscraper,
+    "curl_cffi": _via_curl_cffi,
     "googlesearch": _via_googlesearch,
     "google_cse": _via_google_cse,
     "headless": _via_headless,
@@ -346,9 +451,10 @@ _TIERS = {
 }
 
 # Σειρά: searxng (αν self-hosted) & duckduckgo = γρήγορα/αξιόπιστα -> πρώτα. brave =
-# επίσημο API (με key). headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Bing/DDG), ισχυρό fallback που
-# λύνει ό,τι δεν λύνουν τα ελαφριά tiers (~3-5s). google_cse/googlesearch/openserp = extra.
-_DEFAULT_ORDER = ["searxng", "duckduckgo", "brave", "headless", "google_cse", "googlesearch", "openserp"]
+# επίσημο API (με key). cloudscraper = optional anti-bot tier για Cloudflare/bot pages.
+# headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Bing/DDG), ισχυρό fallback που λύνει ό,τι δεν λύνουν
+# τα ελαφριά tiers (~3-5s). google_cse/googlesearch/openserp = extra.
+_DEFAULT_ORDER = ["searxng", "duckduckgo", "brave", "cloudscraper", "curl_cffi", "headless", "google_cse", "googlesearch", "openserp"]
 
 
 def search_web(query: str, *, limit: int = 6) -> list[dict[str, str]]:
