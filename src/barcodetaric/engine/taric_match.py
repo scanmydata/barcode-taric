@@ -277,14 +277,26 @@ def _is_food_chapter(code: str) -> bool:
 
 def match(description_el: str, description_en: str = "", *, barcode: str = "",
           brand: str = "", quantity: str = "", categories: str = "",
-          analysis: str = "", source: str = "", use_ai: bool = True) -> MatchResult:
+          analysis: str = "", source: str = "", use_ai: bool = True,
+          fast: bool = False) -> MatchResult:
+    """Αντιστοίχιση περιγραφής -> TARIC.
+
+    `fast=True`: ΓΡΗΓΟΡΟ offline μονοπάτι για μαζική αντιστοίχιση 4k-10k κωδικών —
+    ΧΩΡΙΣ δικτυακή μετάφραση (MyMemory) & ΧΩΡΙΣ per-item embeddings (τα δύο που έκαναν
+    το bulk match «παρα πολύ ώρα»). Καθαρό ελληνικό FTS (~29/s). Το αποτέλεσμα είναι
+    προσωρινό/για review — η ακριβής κατάταξη γίνεται με AI (`fast=False`).
+    """
+    if fast:
+        use_ai = False
     description_el = (description_el or "").strip()
     description_en = (description_en or "").strip()
 
     # English-first: η επίσημη ΕΕ ονοματολογία (CN/HS) είναι τυποποιημένη στα Αγγλικά,
     # οπότε η κατάταξη είναι ακριβέστερη με αγγλικό query. Αν λείπει το EN αλλά υπάρχει
     # EL, το μεταφράζουμε μέσω του δωρεάν tier (χωρίς LLM) πριν το scoring/AI ranking.
-    if SETTINGS.get("classify_in_english", True) and description_el and not description_en:
+    # ΠΡΟΣΟΧΗ: αυτό είναι δικτυακή κλήση — στο fast bulk μονοπάτι την ΠΑΡΑΚΑΜΠΤΟΥΜΕ.
+    if (not fast and SETTINGS.get("classify_in_english", True)
+            and description_el and not description_en):
         translated = translation_api.to_english(description_el)
         if translated and translated.strip().lower() != description_el.strip().lower():
             description_en = translated.strip()
@@ -324,6 +336,10 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
         food = [(s, r) for s, r in cands if _is_food_chapter(r.code)]
         if food:
             cands = food
+    # Το semantic είναι OFFLINE & ΠΟΛΥΓΛΩΣΣΟ -> δίνει recall στα ελληνικά ΧΩΡΙΣ δικτυακή
+    # μετάφραση. Το κρατάμε ΚΑΙ στο fast μονοπάτι (το network translation είναι που έκανε
+    # το bulk αργό/να κρεμάει — όχι το τοπικό encode). Χωρίς semantic, το σκέτο ελληνικό FTS
+    # γυρνά «none» σε πολλά κοινά προϊόντα.
     sem = embeddings.semantic_candidates(clean_combined, top=6) if clean_combined else []
     fts_top = cands[0][0] if cands else 0.0
     sem_top = sem[0][0] if sem else 0.0

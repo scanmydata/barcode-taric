@@ -536,17 +536,23 @@ def _apply_match(item: ClientItem, m) -> None:
 
 
 def _match_items(items: list[ClientItem], use_ai: bool, progress=None) -> int:
-    """Αντιστοιχίζει λίστα ειδών· γράφει σε ΜΙΑ bulk transaction στο τέλος (ταχύτητα σε 10k)."""
+    """Αντιστοιχίζει λίστα ειδών· γράφει σε ΜΙΑ bulk transaction στο τέλος (ταχύτητα σε 10k).
+
+    Χωρίς AI => `fast` μονοπάτι (καθαρό FTS, ΧΩΡΙΣ δικτυακή μετάφραση/embeddings ανά είδος),
+    ώστε 4k-10k κωδικοί να τελειώνουν σε λεπτά αντί για ώρες.
+    """
     from ..engine import taric_match
     total = len(items)
+    fast = not use_ai
+    step = 10 if fast else 5           # συχνότερη ένδειξη προόδου (να μη φαίνεται κολλημένο)
     updated: list[ClientItem] = []
     for i, item in enumerate(items, 1):
-        if progress and (i == 1 or i % 25 == 0 or i == total):
+        if progress and (i <= 2 or i % step == 0 or i == total):
             pct = int(i / total * 100) if total else 100
             progress(f"Αντιστοίχιση {i}/{total} ({pct}%): {item.description_el or item.barcode}")
         m = taric_match.match(item.description_el, item.description_en, barcode=item.barcode,
                               brand=item.brand, quantity=item.quantity, categories=item.categories,
-                              use_ai=use_ai)
+                              use_ai=use_ai, fast=fast)
         if m.taric_code:
             _apply_match(item, m)
             updated.append(item)
