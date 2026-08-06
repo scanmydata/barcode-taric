@@ -63,6 +63,7 @@ class ClientItem:
     categories: str = ""
     analysis: str = ""       # δομημένη «ανάλυση» (υλικό/τύπος/χρήση) για tariff + ML training
     catalog_id: Optional[int] = None
+    extra: str = ""          # JSON: επιπλέον στήλες εισαγόμενου Excel (κωδικοί/λεπτομέρειες) για export
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

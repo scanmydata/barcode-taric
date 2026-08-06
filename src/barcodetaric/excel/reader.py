@@ -23,6 +23,21 @@ class ImportedRow:
     barcode: str = ""
     description: str = ""
     taric_code: str = ""
+    extra: dict = None       # επιπλέον στήλες (όνομα -> τιμή) που ο χρήστης θέλει να κρατήσει
+
+    def __post_init__(self):
+        if self.extra is None:
+            self.extra = {}
+
+
+@dataclass
+class ColumnPreview:
+    """Ανάλυση αρχείου για τον διάλογο αντιστοίχισης στηλών (import)."""
+    headers: list        # ονόματα στηλών (ή "Στήλη 1/2…" αν δεν υπάρχει header)
+    has_header: bool
+    samples: list        # μερικές δείγμα-γραμμές (list[list[str]])
+    suggested: dict      # {"barcode": idx|None, "description": idx|None, "taric": idx|None}
+    n_cols: int
 
 
 def _clean(value: object) -> str:
@@ -92,6 +107,74 @@ def read_codebook(path: str | Path) -> list[ImportedRow]:
             desc = _first_text(r, exclude={barcode_idx})
         out.append(ImportedRow(barcode=re.sub(r"\s", "", barcode), description=desc,
                                taric_code=re.sub(r"\D", "", taric)))
+    return out
+
+
+def preview_columns(path: str | Path, sample: int = 8) -> ColumnPreview:
+    """Διαβάζει μόνο τις πρώτες γραμμές & προτείνει αντιστοίχιση στηλών για τον διάλογο."""
+    path = Path(path)
+    rows = [r for r in _read_rows(path) if any(_clean(c) for c in r)]
+    if not rows:
+        return ColumnPreview(headers=[], has_header=False, samples=[], suggested={}, n_cols=0)
+
+    header = [_clean(c).lower() for c in rows[0]]
+    barcode_idx = _find_col(header, BARCODE_HEADERS)
+    desc_idx = _find_col(header, DESC_HEADERS)
+    taric_idx = _find_col(header, TARIC_HEADERS)
+    has_header = barcode_idx is not None or desc_idx is not None or taric_idx is not None
+    data = rows[1:] if has_header else rows
+    n_cols = max((len(r) for r in rows), default=0)
+
+    if barcode_idx is None and desc_idx is None:
+        barcode_idx, desc_idx = _guess_columns(data)
+
+    if has_header:
+        headers = [_clean(c) or f"Στήλη {i+1}" for i, c in enumerate(rows[0])]
+        headers += [f"Στήλη {i+1}" for i in range(len(headers), n_cols)]
+    else:
+        headers = [f"Στήλη {i+1}" for i in range(n_cols)]
+
+    samples = [[_clean(c) for c in r] for r in data[:sample]]
+    suggested = {"barcode": barcode_idx, "description": desc_idx, "taric": taric_idx}
+    return ColumnPreview(headers=headers, has_header=has_header, samples=samples,
+                         suggested=suggested, n_cols=n_cols)
+
+
+def read_with_mapping(path: str | Path, mapping: dict, extra_cols: list[int] | None = None,
+                      has_header: bool = True) -> list[ImportedRow]:
+    """Διαβάζει το αρχείο με ΡΗΤΗ αντιστοίχιση στηλών (από τον διάλογο).
+
+    `mapping`: {"barcode": idx|None, "description": idx|None, "taric": idx|None}
+    `extra_cols`: δείκτες στηλών να κρατηθούν αυτούσιες (κωδικοί/λεπτομέρειες προϊόντος).
+    """
+    path = Path(path)
+    rows = [r for r in _read_rows(path) if any(_clean(c) for c in r)]
+    if not rows:
+        return []
+    headers = [_clean(c) for c in rows[0]] if has_header else []
+    data = rows[1:] if has_header else rows
+    b_idx = mapping.get("barcode")
+    d_idx = mapping.get("description")
+    t_idx = mapping.get("taric")
+    extra_cols = extra_cols or []
+
+    def cell(r, idx):
+        return _clean(r[idx]) if idx is not None and 0 <= idx < len(r) else ""
+
+    out: list[ImportedRow] = []
+    for r in data:
+        barcode = re.sub(r"\s", "", cell(r, b_idx))
+        desc = cell(r, d_idx)
+        taric = re.sub(r"\D", "", cell(r, t_idx))
+        if not desc and not barcode:
+            continue
+        extra = {}
+        for i in extra_cols:
+            val = cell(r, i)
+            if val:
+                name = headers[i] if i < len(headers) and headers[i] else f"Στήλη {i+1}"
+                extra[name] = val
+        out.append(ImportedRow(barcode=barcode, description=desc, taric_code=taric, extra=extra))
     return out
 
 

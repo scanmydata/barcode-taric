@@ -7,6 +7,8 @@ export. Κάθε νέα εγγραφή τροφοδοτεί και την κεν
 
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
@@ -14,12 +16,13 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QCheckBox,
 )
 
-from .. import repo
+from .. import db, repo
 from ..engine import resolve
 from ..engine.barcode_sources import looks_like_barcode
 from ..excel import exporter, reader
 from ..models import CatalogItem, ClientItem
-from .widgets import NumericItem, configure_table, h1, muted
+from .import_dialog import ImportMappingDialog
+from .widgets import BusyOverlay, NumericItem, configure_table, h1, muted
 from .workers import run_async
 
 _ID_ROLE = Qt.UserRole + 1
@@ -67,12 +70,27 @@ class CodebookPage(QWidget):
         tools.addWidget(export_btn)
         root.addLayout(tools)
 
+        # --- γραμμή επιλογής (select-all / refresh) ---
+        selrow = QHBoxLayout()
+        self.select_all_cb = QCheckBox("Επιλογή όλων")
+        self.select_all_cb.stateChanged.connect(self._on_select_all_toggle)
+        refresh_btn = QPushButton("🔄 Ανανέωση")
+        refresh_btn.setToolTip("Ανανέωση πίνακα (αν δεν ενημερώθηκε αυτόματα)")
+        refresh_btn.clicked.connect(self.reload)
+        selrow.addWidget(self.select_all_cb)
+        selrow.addWidget(refresh_btn)
+        selrow.addStretch(1)
+        self.sel_count_lbl = muted("")
+        selrow.addWidget(self.sel_count_lbl)
+        root.addLayout(selrow)
+
         # --- πίνακας ---
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
-            ["Barcode", "Περιγραφή (EL)", "Description (EN)", "TARIC", "HS4", "Πηγή", "Βεβ.", "✔"])
-        configure_table(self.table, stretch=[1, 2])
+            ["☑", "Barcode", "Περιγραφή (EL)", "Description (EN)", "TARIC", "HS4", "Πηγή", "Βεβ.", "✔"])
+        configure_table(self.table, stretch=[2, 3])
         self.table.itemDoubleClicked.connect(lambda *_: self.edit_selected())
+        self.table.itemChanged.connect(self._on_item_changed)
         root.addWidget(self.table)
 
         bottom = QHBoxLayout()
@@ -94,6 +112,8 @@ class CodebookPage(QWidget):
         bottom.addWidget(self.status)
         root.addLayout(bottom)
 
+        self._busy = BusyOverlay(self)
+
     # ------------------------------------------------------------- data ----
     def load_client(self, client_id: int) -> None:
         self._client_id = client_id
@@ -106,27 +126,65 @@ class CodebookPage(QWidget):
             return
         items = repo.list_client_items(self._client_id)
         self._ids = [it.id for it in items]
+        self._loading = True                  # μη πυροδοτείς _on_item_changed κατά το γέμισμα
         self.table.setSortingEnabled(False)   # μη αναδιατάσσεις κατά το γέμισμα
         self.table.setRowCount(len(items))
         for row, it in enumerate(items):
             self._set_row(row, it)
         self.table.setSortingEnabled(True)
+        self._loading = False
+        self.select_all_cb.blockSignals(True)
+        self.select_all_cb.setChecked(False)
+        self.select_all_cb.blockSignals(False)
+        self._update_sel_count()
         stats = repo.client_stats(self._client_id)
         self.stats_lbl.setText(
             f"Σύνολο: {stats['total']} · Με TARIC: {stats['matched']} · "
             f"Εκκρεμή: {stats['unmatched']} · Επιβεβαιωμένα: {stats['verified']}")
 
     def _set_row(self, row: int, it: ClientItem) -> None:
-        code_item = QTableWidgetItem(it.barcode)
-        code_item.setData(_ID_ROLE, it.id)    # id στη γραμμή -> ανθεκτικό σε sorting
-        self.table.setItem(row, 0, code_item)
-        self.table.setItem(row, 1, QTableWidgetItem(it.description_el or it.description_en))
-        self.table.setItem(row, 2, QTableWidgetItem(it.description_en or it.description_el))
-        self.table.setItem(row, 3, QTableWidgetItem(it.taric_code))
-        self.table.setItem(row, 4, QTableWidgetItem(it.hs4))
-        self.table.setItem(row, 5, QTableWidgetItem(it.taric_source))
-        self.table.setItem(row, 6, NumericItem(f"{it.confidence:.2f}" if it.confidence else "0"))
-        self.table.setItem(row, 7, QTableWidgetItem("✔" if it.verified else ""))
+        check_item = QTableWidgetItem()
+        check_item.setFlags(
+            (Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+        check_item.setCheckState(Qt.Unchecked)
+        check_item.setData(_ID_ROLE, it.id)   # id στη γραμμή -> ανθεκτικό σε sorting
+        self.table.setItem(row, 0, check_item)
+        self.table.setItem(row, 1, QTableWidgetItem(it.barcode))
+        self.table.setItem(row, 2, QTableWidgetItem(it.description_el or it.description_en))
+        self.table.setItem(row, 3, QTableWidgetItem(it.description_en or it.description_el))
+        self.table.setItem(row, 4, QTableWidgetItem(it.taric_code))
+        self.table.setItem(row, 5, QTableWidgetItem(it.hs4))
+        self.table.setItem(row, 6, QTableWidgetItem(it.taric_source))
+        self.table.setItem(row, 7, NumericItem(f"{it.confidence:.2f}" if it.confidence else "0"))
+        self.table.setItem(row, 8, QTableWidgetItem("✔" if it.verified else ""))
+
+    # ------------------------------------------------------ selection ----
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if getattr(self, "_loading", False) or item.column() != 0:
+            return
+        self._update_sel_count()
+
+    def _on_select_all_toggle(self, state: int) -> None:
+        checked = Qt.CheckState(state) == Qt.Checked
+        self._loading = True
+        for row in range(self.table.rowCount()):
+            it = self.table.item(row, 0)
+            if it is not None:
+                it.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        self._loading = False
+        self._update_sel_count()
+
+    def _update_sel_count(self) -> None:
+        n = len(self._checked_ids())
+        self.sel_count_lbl.setText(f"{n} επιλεγμένα" if n else "")
+
+    def _checked_ids(self) -> list[int]:
+        out = []
+        for row in range(self.table.rowCount()):
+            it = self.table.item(row, 0)
+            if it is not None and it.checkState() == Qt.Checked:
+                out.append(int(it.data(_ID_ROLE)))
+        return out
 
     def _selected_item(self) -> ClientItem | None:
         rows = self.table.selectionModel().selectedRows()
@@ -147,6 +205,13 @@ class CodebookPage(QWidget):
                 if ci:
                     out.append(ci)
         return out
+
+    def _target_ids(self) -> list[int]:
+        """IDs για μαζικές ενέργειες: πρώτα τα checked, αλλιώς οι επιλεγμένες γραμμές."""
+        ids = self._checked_ids()
+        if ids:
+            return ids
+        return [ci.id for ci in self.selected_items()]
 
     # ---------------------------------------------------------- add flows ----
     def add_from_input(self) -> None:
@@ -191,32 +256,39 @@ class CodebookPage(QWidget):
             "Υποστηριζόμενα (*.xlsx *.xlsm *.csv *.tsv *.txt)")
         if not path:
             return
+        # 1) Ανάλυση στηλών + διάλογος αντιστοίχισης (auto-detect + επιλογή extra στηλών).
         try:
-            rows = reader.read_codebook(path)
+            preview = reader.preview_columns(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Import", f"Αποτυχία ανάγνωσης: {exc}")
             return
-        if not rows:
+        if not preview.n_cols:
             QMessageBox.information(self, "Import", "Δεν βρέθηκαν γραμμές.")
             return
-        # Μαζική εισαγωγή σε ΜΙΑ transaction (4k-10k κωδικοί σε δευτερόλεπτα, όχι λεπτά).
-        items, catalog_items = [], []
-        for r in rows:
-            desc_el = r.description if _is_greek(r.description) else ""
-            desc_en = r.description if not _is_greek(r.description) else ""
-            hs4 = r.taric_code[:4] if r.taric_code else ""
-            src = "manual" if r.taric_code else ""
-            items.append(ClientItem(
-                client_id=self._client_id, barcode=r.barcode,
-                description_el=desc_el, description_en=desc_en,
-                taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel"))
-            catalog_items.append(CatalogItem(
-                barcode=r.barcode, description_el=desc_el, description_en=desc_en,
-                taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel"))
-        repo.bulk_upsert_client_items(items)
-        repo.bulk_upsert_catalog(catalog_items)
+        dlg = ImportMappingDialog(preview, parent=self)
+        if not dlg.exec():
+            return
+        mapping = dlg.mapping()
+        extra_cols = dlg.extra_cols()
+        has_header = dlg.has_header()
+        if mapping.get("barcode") is None and mapping.get("description") is None:
+            QMessageBox.warning(self, "Import", "Επιλέξτε τουλάχιστον στήλη barcode ή περιγραφής.")
+            return
+        client_id = self._client_id
+        self._busy.start("Εισαγωγή δεδομένων…")
+        run_async(self, _import_job, path, client_id, mapping, extra_cols, has_header,
+                  on_done=self._on_import_done, on_error=self._on_busy_error,
+                  on_progress=self._busy.set_message)
+
+    def _on_import_done(self, count: int) -> None:
+        self._busy.stop()
         self.reload()
-        QMessageBox.information(self, "Import", f"Εισήχθησαν {len(rows)} γραμμές.")
+        QMessageBox.information(self, "Import", f"Εισήχθησαν {count} γραμμές.\n"
+                               "(Κρατήθηκε αυτόματο αντίγραφο ασφαλείας.)")
+
+    def _on_busy_error(self, message: str) -> None:
+        self._busy.stop()
+        self._on_error(message)
 
     # -------------------------------------------------------- match / edit ----
     def match_all(self) -> None:
@@ -226,24 +298,50 @@ class CodebookPage(QWidget):
         if not pending:
             QMessageBox.information(self, "Αντιστοίχιση", "Δεν υπάρχουν εκκρεμή είδη.")
             return
+        # Για 4k-10k κωδικούς το AI-ανά-είδος είναι ώρες + rate limits· δίνουμε επιλογή:
+        #   «Γρήγορη» = FTS + semantic (χωρίς AI), «Ακριβής» = με AI (για μικρά σύνολα/review).
+        box = QMessageBox(self)
+        box.setWindowTitle("Αντιστοίχιση όλων")
+        box.setText(f"Θα αντιστοιχιστούν {len(pending)} εκκρεμή είδη.\n\n"
+                    "• Γρήγορη: χωρίς AI (FTS + εννοιολογικό) — για μεγάλα κωδικολόγια.\n"
+                    "• Ακριβής: με AI ανά είδος — πιο αργή, για μικρά σύνολα ή review.")
+        fast_btn = box.addButton("⚡ Γρήγορη (χωρίς AI)", QMessageBox.AcceptRole)
+        ai_btn = box.addButton("🎯 Ακριβής (με AI)", QMessageBox.AcceptRole)
+        box.addButton("Άκυρο", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked not in (fast_btn, ai_btn):
+            return
+        use_ai = clicked is ai_btn
         client_id = self._client_id
-        self.status.setText(f"Αντιστοίχιση {len(pending)} ειδών…")
-        run_async(self, _match_all_job, client_id,
-                  on_done=self._on_match_done, on_error=self._on_error,
-                  on_progress=self.status.setText)
+        self._busy.start(f"Αντιστοίχιση {len(pending)} ειδών…")
+        run_async(self, _match_all_job, client_id, use_ai,
+                  on_done=self._on_match_done, on_error=self._on_busy_error,
+                  on_progress=self._busy.set_message)
 
     def _on_match_done(self, count: int) -> None:
+        self._busy.stop()
         self.status.setText(f"Ολοκληρώθηκε: {count} αντιστοιχίσεις.")
         self.reload()
 
     def rematch_selected(self) -> None:
-        item = self._selected_item()
-        if not item:
+        ids = self._target_ids()
+        if not ids:
+            item = self._selected_item()
+            if item:
+                ids = [item.id]
+        if not ids:
+            QMessageBox.information(self, "Επανα-αντιστοίχιση", "Επιλέξτε είδη (checkbox ή γραμμές).")
             return
-        self.status.setText("Επανα-αντιστοίχιση…")
-        run_async(self, _match_single_job, item.id,
-                  on_done=lambda _: (self.status.setText("Έτοιμο."), self.reload()),
-                  on_error=self._on_error, on_progress=self.status.setText)
+        self._busy.start(f"Επανα-αντιστοίχιση {len(ids)} ειδών…")
+        run_async(self, _rematch_ids_job, ids,
+                  on_done=self._on_rematch_done, on_error=self._on_busy_error,
+                  on_progress=self._busy.set_message)
+
+    def _on_rematch_done(self, n: int) -> None:
+        self._busy.stop()
+        self.status.setText(f"Έτοιμο: {n} αντιστοιχίσεις.")
+        self.reload()
 
     def edit_selected(self) -> None:
         item = self._selected_item()
@@ -262,31 +360,57 @@ class CodebookPage(QWidget):
             self.reload()
 
     def verify_selected(self) -> None:
-        item = self._selected_item()
-        if not item:
+        ids = self._target_ids()
+        if not ids:
+            item = self._selected_item()
+            if item:
+                ids = [item.id]
+        if not ids:
+            QMessageBox.information(self, "Επιβεβαίωση", "Επιλέξτε είδη (checkbox ή γραμμές).")
             return
-        if not item.taric_code:
-            QMessageBox.information(self, "Επιβεβαίωση", "Το είδος δεν έχει TARIC ακόμη.")
-            return
-        repo.set_item_verified(item.id, 1)
-        repo.upsert_catalog(CatalogItem(
-            barcode=item.barcode, description_el=item.description_el,
-            description_en=item.description_en, taric_code=item.taric_code, hs4=item.hs4,
-            taric_description=item.taric_description, taric_source=item.taric_source,
-            verified=1, source="verified"))
-        self.status.setText("Επιβεβαιώθηκε — θα χρησιμοποιηθεί στην εκπαίδευση του μοντέλου.")
+        done, skipped = 0, 0
+        for iid in ids:
+            item = repo.get_client_item(iid)
+            if not item or not item.taric_code:
+                skipped += 1
+                continue
+            repo.set_item_verified(item.id, 1)
+            repo.upsert_catalog(CatalogItem(
+                barcode=item.barcode, description_el=item.description_el,
+                description_en=item.description_en, taric_code=item.taric_code, hs4=item.hs4,
+                taric_description=item.taric_description, taric_source=item.taric_source,
+                verified=1, source="verified"))
+            done += 1
+        msg = f"Επιβεβαιώθηκαν {done} — θα χρησιμοποιηθούν στην εκπαίδευση του μοντέλου."
+        if skipped:
+            msg += f" ({skipped} χωρίς TARIC παραλείφθηκαν)"
+        self.status.setText(msg)
         self.reload()
 
     def delete_selected(self) -> None:
-        item = self._selected_item()
-        if not item:
+        ids = self._target_ids()
+        if not ids:
+            item = self._selected_item()
+            if item:
+                ids = [item.id]
+        if not ids:
+            QMessageBox.information(self, "Διαγραφή", "Επιλέξτε είδη (checkbox ή γραμμές).")
             return
-        repo.delete_client_item(item.id)
+        if len(ids) > 1:
+            confirm = QMessageBox.question(
+                self, "Διαγραφή", f"Διαγραφή {len(ids)} ειδών;")
+            if confirm != QMessageBox.Yes:
+                return
+        repo.delete_client_items(ids)
         self.reload()
 
     def export(self) -> None:
         if self._client_id is None:
             return
+        dlg = _ExportDialog(parent=self)
+        if not dlg.exec():
+            return
+        include_extra = dlg.include_extra()
         client = repo.get_client(self._client_id)
         default = f"kodikologio_{(client.name if client else 'client').replace(' ', '_')}.xlsx"
         path, _ = QFileDialog.getSaveFileName(
@@ -294,7 +418,8 @@ class CodebookPage(QWidget):
         if not path:
             return
         try:
-            n = exporter.export(self._client_id, path)
+            db.backup_db("export")        # αυτόματο backup πριν την εξαγωγή
+            n = exporter.export(self._client_id, path, include_extra=include_extra)
             QMessageBox.information(self, "Export", f"Εξήχθησαν {n} γραμμές στο\n{path}")
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Export", f"Αποτυχία: {exc}")
@@ -352,6 +477,37 @@ class _ItemDialog(QDialog):
         return self._item
 
 
+class _ExportDialog(QDialog):
+    """Βοηθός εξαγωγής: εξηγεί τι εξάγεται & αν θα μπουν οι επιπλέον στήλες."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Εξαγωγή κωδικολογίου")
+        self.setMinimumWidth(520)
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+        info = QLabel(
+            "Θα εξαχθούν οι βασικές στήλες:\n"
+            "• Barcode, Περιγραφή (EL/EN), TARIC, HS4\n"
+            "• Περιγραφή TARIC, Βεβαιότητα, Πηγή, Αιτιολόγηση, Επιβεβαιωμένο\n\n"
+            "Στο επόμενο βήμα επιλέγετε όνομα & τύπο αρχείου (Excel ή CSV).")
+        info.setWordWrap(True)
+        root.addWidget(info)
+        self.chk_extra = QCheckBox(
+            "Να συμπεριληφθούν και οι επιπλέον στήλες του αρχικού Excel "
+            "(κωδικοί/λεπτομέρειες που κρατήθηκαν κατά το import)")
+        self.chk_extra.setChecked(True)
+        root.addWidget(self.chk_extra)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Συνέχεια")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def include_extra(self) -> bool:
+        return self.chk_extra.isChecked()
+
+
 # --------------------------------------------------------------- helpers ----
 
 def _is_greek(text: str) -> bool:
@@ -370,39 +526,74 @@ def _upsert_catalog(res: resolve.ResolveResult) -> int | None:
         analysis=res.analysis))
 
 
-def _match_single_job(item_id: int, progress=None) -> bool:
-    from ..engine import taric_match
-    item = repo.get_client_item(item_id)
-    if not item:
-        return False
-    m = taric_match.match(item.description_el, item.description_en, barcode=item.barcode,
-                          brand=item.brand, quantity=item.quantity, categories=item.categories)
+def _apply_match(item: ClientItem, m) -> None:
     item.taric_code = m.taric_code
     item.hs4 = m.hs4
     item.taric_description = m.taric_description
     item.confidence = m.confidence
     item.ai_rationale = m.ai_rationale
     item.taric_source = m.taric_source
-    repo.update_client_item(item)
-    return True
 
 
-def _match_all_job(client_id: int, progress=None) -> int:
+def _match_items(items: list[ClientItem], use_ai: bool, progress=None) -> int:
+    """Αντιστοιχίζει λίστα ειδών· γράφει σε ΜΙΑ bulk transaction στο τέλος (ταχύτητα σε 10k)."""
     from ..engine import taric_match
-    pending = repo.list_client_items(client_id, only_unmatched=True)
-    done = 0
-    for i, item in enumerate(pending, 1):
-        if progress:
-            progress(f"Αντιστοίχιση {i}/{len(pending)}: {item.description_el or item.barcode}")
+    total = len(items)
+    updated: list[ClientItem] = []
+    for i, item in enumerate(items, 1):
+        if progress and (i == 1 or i % 25 == 0 or i == total):
+            pct = int(i / total * 100) if total else 100
+            progress(f"Αντιστοίχιση {i}/{total} ({pct}%): {item.description_el or item.barcode}")
         m = taric_match.match(item.description_el, item.description_en, barcode=item.barcode,
-                              brand=item.brand, quantity=item.quantity, categories=item.categories)
+                              brand=item.brand, quantity=item.quantity, categories=item.categories,
+                              use_ai=use_ai)
         if m.taric_code:
-            item.taric_code = m.taric_code
-            item.hs4 = m.hs4
-            item.taric_description = m.taric_description
-            item.confidence = m.confidence
-            item.ai_rationale = m.ai_rationale
-            item.taric_source = m.taric_source
-            repo.update_client_item(item)
-            done += 1
-    return done
+            _apply_match(item, m)
+            updated.append(item)
+    if progress:
+        progress(f"Αποθήκευση {len(updated)} αντιστοιχίσεων…")
+    repo.bulk_update_client_items(updated)
+    return len(updated)
+
+
+def _rematch_ids_job(item_ids: list[int], progress=None) -> int:
+    items = [it for it in (repo.get_client_item(i) for i in item_ids) if it]
+    # Επανα-αντιστοίχιση = ρητή ενέργεια χρήστη σε επιλεγμένα -> χρήση AI για ακρίβεια.
+    return _match_items(items, use_ai=True, progress=progress)
+
+
+def _match_all_job(client_id: int, use_ai: bool = True, progress=None) -> int:
+    pending = repo.list_client_items(client_id, only_unmatched=True)
+    return _match_items(pending, use_ai=use_ai, progress=progress)
+
+
+def _import_job(path: str, client_id: int, mapping: dict, extra_cols: list,
+                has_header: bool, progress=None) -> int:
+    if progress:
+        progress("Δημιουργία αντιγράφου ασφαλείας…")
+    db.backup_db("import")
+    if progress:
+        progress("Ανάγνωση αρχείου…")
+    rows = reader.read_with_mapping(path, mapping, extra_cols, has_header)
+    if not rows:
+        return 0
+    items, catalog_items = [], []
+    for r in rows:
+        desc_el = r.description if _is_greek(r.description) else ""
+        desc_en = r.description if not _is_greek(r.description) else ""
+        hs4 = r.taric_code[:4] if r.taric_code else ""
+        src = "manual" if r.taric_code else ""
+        extra_json = json.dumps(r.extra, ensure_ascii=False) if r.extra else ""
+        items.append(ClientItem(
+            client_id=client_id, barcode=r.barcode,
+            description_el=desc_el, description_en=desc_en,
+            taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel",
+            extra=extra_json))
+        catalog_items.append(CatalogItem(
+            barcode=r.barcode, description_el=desc_el, description_en=desc_en,
+            taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel"))
+    if progress:
+        progress(f"Αποθήκευση {len(items)} γραμμών…")
+    repo.bulk_upsert_client_items(items)
+    repo.bulk_upsert_catalog(catalog_items)
+    return len(rows)

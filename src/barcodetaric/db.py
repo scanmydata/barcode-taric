@@ -19,10 +19,14 @@ SCHEMA_VERSION = 1
 
 @contextmanager
 def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(path or db_path())
+    conn = sqlite3.connect(path or db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # Χωρίς busy_timeout, μια μεγάλη εγγραφή (π.χ. import 25k TARIC) που κρατά το lock
+    # έκανε τις ταυτόχρονες κλήσεις του UI thread να ΠΑΓΩΝΟΥΝ/σκάνε ("database is locked").
+    # Με timeout, ο reader ΠΕΡΙΜΕΝΕΙ ήρεμα μέχρι να ελευθερωθεί (έως 30s) αντί να κολλάει.
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         yield conn
         conn.commit()
@@ -170,6 +174,9 @@ def init_db(path: Path | None = None) -> None:
                 "brand": "TEXT", "quantity": "TEXT", "categories": "TEXT",
                 "analysis": "TEXT",   # δομημένη ανάλυση προϊόντος (tariff hint + ML feature)
             })
+        # `extra`: JSON με επιπλέον στήλες του εισαγόμενου Excel (κωδικοί προϊόντος,
+        # λεπτομέρειες κ.λπ.) που ο χρήστης θέλει να διατηρηθούν & να εξαχθούν αυτούσιες.
+        _ensure_columns(c, "client_items", {"extra": "TEXT"})
         _ensure_columns(c, "taric_nomenclature", {
             "description_path_el": "TEXT", "description_path_en": "TEXT",
         })
@@ -187,3 +194,34 @@ def _ensure_columns(cursor, table: str, columns: dict[str, str]) -> None:
 def has_fts5(path: Path | None = None) -> bool:
     with connect(path) as conn:
         return _has_fts5(conn)
+
+
+def backup_db(tag: str = "") -> Path | None:
+    """Κρατά αντίγραφο ασφαλείας της βάσης πριν από import/export.
+
+    Χρησιμοποιεί το online-backup API του SQLite (συνεπές ακόμη & με WAL/ανοιχτές
+    συνδέσεις). Τα backups μπαίνουν στο `data-dir/backups/` και κρατάμε τα 10 πιο
+    πρόσφατα. Επιστρέφει το path ή None αν αποτύχει (ποτέ δεν μπλοκάρει τη ροή).
+    """
+    import time
+    src = db_path()
+    if not Path(src).is_file():
+        return None
+    try:
+        backups = Path(src).parent / "backups"
+        backups.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        suffix = f"_{tag}" if tag else ""
+        dest = backups / f"backup_{stamp}{suffix}.db"
+        with sqlite3.connect(src) as s, sqlite3.connect(dest) as d:
+            s.backup(d)
+        # Διατήρησε μόνο τα 10 πιο πρόσφατα.
+        old = sorted(backups.glob("backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in old[10:]:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        return dest
+    except Exception:  # noqa: BLE001 - το backup δεν πρέπει ΠΟΤΕ να σπάει import/export
+        return None

@@ -52,6 +52,27 @@ def set_theme(name: str) -> Palette:
     return CURRENT.palette
 
 
+def _check_icon(p: Palette) -> str:
+    """Γράφει (μία φορά ανά χρώμα) ένα SVG checkmark & επιστρέφει path για το QSS.
+
+    Το indicator:checked έχει accent φόντο· το «✓» ζωγραφίζεται με χρώμα accent_txt
+    ώστε να έχει αντίθεση και στα δύο θέματα. QSS σε Windows θέλει forward slashes.
+    """
+    try:
+        from ..config import data_dir
+        color = p.accent_txt.replace("#", "")
+        dest = data_dir() / f"_check_{color}.svg"
+        if not dest.is_file():
+            dest.write_text(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">'
+                f'<path d="M2.5 7.5 L6 11 L11.5 3.5" fill="none" stroke="{p.accent_txt}" '
+                'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+                encoding="utf-8")
+        return str(dest).replace("\\", "/")
+    except Exception:  # noqa: BLE001 - σε αποτυχία, μένει το γεμάτο accent box (χωρίς ✓)
+        return ""
+
+
 def build(p: Palette) -> str:
     return f"""
     QWidget {{
@@ -150,6 +171,25 @@ def build(p: Palette) -> str:
     }}
     QTableWidget::item, QTableView::item {{ padding: 6px 6px; }}
     QTableView {{ selection-color: {p.accent_txt}; }}
+
+    /* Checkbox indicators — ρητό styling ώστε να ΦΑΙΝΟΝΤΑΙ καθαρά σε light & dark
+       (χωρίς αυτό τα Qt indicators σε πίνακα/checkbox βγαίνουν αόρατα/κομμένα). */
+    QCheckBox {{ spacing: 8px; background: transparent; }}
+    QCheckBox::indicator, QTableView::indicator, QTableWidget::indicator {{
+        width: 17px; height: 17px;
+        border: 2px solid {p.muted};
+        border-radius: 5px;
+        background: {p.panel};
+    }}
+    QCheckBox::indicator:hover, QTableView::indicator:hover, QTableWidget::indicator:hover {{
+        border-color: {p.accent};
+    }}
+    QCheckBox::indicator:checked, QTableView::indicator:checked, QTableWidget::indicator:checked {{
+        background: {p.accent};
+        border-color: {p.accent};
+        image: url("{_check_icon(p)}");
+    }}
+    QCheckBox::indicator:indeterminate {{ background: {p.warn}; border-color: {p.warn}; }}
     QComboBox::drop-down {{ border: none; width: 22px; }}
     QComboBox::down-arrow {{
         image: none;

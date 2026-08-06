@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from .. import repo
 from ..engine.ml_classifier import retrain
 from ..taric import circabc, importer, updates
-from .widgets import Card, StatTile, h1, h2, muted
+from .widgets import BusyOverlay, Card, StatTile, h1, h2, muted
 from .workers import run_async
 
 
@@ -87,6 +87,7 @@ class TaricPage(QWidget):
         root.addWidget(ml_card)
         root.addStretch(1)
 
+        self._busy = BusyOverlay(self)
         self.refresh()
 
     # ------------------------------------------------------------- data ----
@@ -108,16 +109,24 @@ class TaricPage(QWidget):
         self.tile_ai.set_value(str(breakdown.get("ai", 0)))
 
     # ---------------------------------------------------------- actions ----
+    def _busy_progress(self, msg: str) -> None:
+        self.taric_status.setText(msg)
+        self._busy.set_message(msg)
+
     def auto_update(self) -> None:
         self.taric_status.setText("Έναρξη αυτόματης ενημέρωσης από ΕΕ (CIRCABC)…")
+        self._busy.start("Ενημέρωση ονοματολογίας TARIC από ΕΕ…\nΜπορεί να πάρει λίγα λεπτά.")
         run_async(self, circabc.auto_import,
-                  on_done=lambda n: (self._info(f"Ενημερώθηκε από ΕΕ: {n} κωδικοί TARIC."), self.refresh()),
-                  on_error=self._error, on_progress=self.taric_status.setText)
+                  on_done=lambda n: (self._busy.stop(),
+                                     self._info(f"Ενημερώθηκε από ΕΕ: {n} κωδικοί TARIC."), self.refresh()),
+                  on_error=self._busy_error, on_progress=self._busy_progress)
 
     def load_seed(self) -> None:
+        self._busy.start("Φόρτωση δείγματος…")
         run_async(self, importer.import_seed,
-                  on_done=lambda n: (self._info(f"Φορτώθηκε δείγμα: {n} εγγραφές."), self.refresh()),
-                  on_error=self._error, on_progress=self.taric_status.setText)
+                  on_done=lambda n: (self._busy.stop(),
+                                     self._info(f"Φορτώθηκε δείγμα: {n} εγγραφές."), self.refresh()),
+                  on_error=self._busy_error, on_progress=self._busy_progress)
 
     def import_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -125,9 +134,11 @@ class TaricPage(QWidget):
             "Υποστηριζόμενα (*.xml *.csv *.tsv *.xlsx *.zip)")
         if not path:
             return
+        self._busy.start("Εισαγωγή ονοματολογίας TARIC…\nΜπορεί να πάρει λίγα λεπτά.")
         run_async(self, importer.import_from_file, path,
-                  on_done=lambda n: (self._info(f"Εισήχθησαν {n} εγγραφές TARIC."), self.refresh()),
-                  on_error=self._error, on_progress=self.taric_status.setText)
+                  on_done=lambda n: (self._busy.stop(),
+                                     self._info(f"Εισήχθησαν {n} εγγραφές TARIC."), self.refresh()),
+                  on_error=self._busy_error, on_progress=self._busy_progress)
 
     def check_updates(self) -> None:
         self.taric_status.setText("Έλεγχος ενημερώσεων…")
@@ -144,9 +155,11 @@ class TaricPage(QWidget):
 
     def train_model(self) -> None:
         self.ml_status.setText("Εκπαίδευση…")
-        run_async(self, retrain, on_done=self._on_trained, on_error=self._error)
+        self._busy.start("Εκπαίδευση τοπικού μοντέλου ML…")
+        run_async(self, retrain, on_done=self._on_trained, on_error=self._busy_error)
 
     def _on_trained(self, result: dict) -> None:
+        self._busy.stop()
         if result.get("trained"):
             self.ml_status.setText(
                 f"Εκπαιδεύτηκε: {result.get('n_samples')} δείγματα · "
@@ -165,3 +178,7 @@ class TaricPage(QWidget):
     def _error(self, message: str) -> None:
         QMessageBox.warning(self, "Σφάλμα", message.splitlines()[0])
         self.refresh()
+
+    def _busy_error(self, message: str) -> None:
+        self._busy.stop()
+        self._error(message)

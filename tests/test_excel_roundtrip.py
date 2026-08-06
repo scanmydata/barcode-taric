@@ -44,3 +44,62 @@ def test_export_roundtrip(tmp_path):
     ws = wb.active
     assert ws.max_row == 2  # header + 1
     assert ws.cell(1, 1).value == "Barcode"
+
+
+def test_preview_columns_autodetect(tmp_path):
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["EAN", "Ονομασία", "Δασμ.", "Εσωτ.Κωδικός"])
+    ws.append(["5201219046055", "Nescafe στιγμιαίος 50g", "", "A-100"])
+    path = tmp_path / "in.xlsx"
+    wb.save(path)
+
+    prev = reader.preview_columns(path)
+    assert prev.has_header and prev.n_cols == 4
+    assert prev.suggested["barcode"] == 0
+    assert prev.suggested["description"] == 1
+
+
+def test_read_with_mapping_keeps_extra(tmp_path):
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["EAN", "Ονομασία", "Εσωτ.Κωδικός", "Τιμή"])
+    ws.append(["5201219046055", "Nescafe στιγμιαίος 50g", "A-100", "9,90"])
+    path = tmp_path / "in.xlsx"
+    wb.save(path)
+
+    mapping = {"barcode": 0, "description": 1, "taric": None}
+    rows = reader.read_with_mapping(path, mapping, extra_cols=[2, 3], has_header=True)
+    assert len(rows) == 1
+    assert rows[0].extra == {"Εσωτ.Κωδικός": "A-100", "Τιμή": "9,90"}
+
+
+def test_export_includes_extra_columns(tmp_path):
+    import json
+    cid = repo.create_client(Client(name="Extra Cols"))
+    repo.bulk_upsert_client_items([ClientItem(
+        client_id=cid, barcode="5201219046055", description_el="Nescafe",
+        source="excel", extra=json.dumps({"Εσωτ.Κωδικός": "A-100"}, ensure_ascii=False))])
+    out = tmp_path / "out.xlsx"
+    exporter.export(cid, out, include_extra=True)
+
+    from openpyxl import load_workbook
+    ws = load_workbook(out).active
+    headers = [c.value for c in ws[1]]
+    assert "Εσωτ.Κωδικός" in headers
+    assert ws.cell(2, headers.index("Εσωτ.Κωδικός") + 1).value == "A-100"
+
+    # χωρίς extra -> μόνο οι βασικές στήλες
+    out2 = tmp_path / "out2.xlsx"
+    exporter.export(cid, out2, include_extra=False)
+    headers2 = [c.value for c in load_workbook(out2).active[1]]
+    assert "Εσωτ.Κωδικός" not in headers2
+
+
+def test_backup_db_creates_file():
+    from barcodetaric import db
+    dest = db.backup_db("unittest")
+    assert dest is not None and dest.is_file()
+    assert dest.parent.name == "backups"

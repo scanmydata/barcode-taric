@@ -330,23 +330,24 @@ def bulk_upsert_client_items(items: list[ClientItem]) -> int:
                 conn.execute(
                     """UPDATE client_items SET description_el=?, description_en=?, taric_code=?, hs4=?,
                        taric_description=?, confidence=?, ai_rationale=?, taric_source=?, verified=?,
-                       source=?, brand=?, quantity=?, categories=?, analysis=?, catalog_id=?,
+                       source=?, brand=?, quantity=?, categories=?, analysis=?, extra=?, catalog_id=?,
                        updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                     (item.description_el, item.description_en, item.taric_code, item.hs4,
                      item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
                      item.verified, item.source, item.brand, item.quantity, item.categories,
-                     item.analysis, item.catalog_id, int(existing["id"])),
+                     item.analysis, item.extra, item.catalog_id, int(existing["id"])),
                 )
             else:
                 conn.execute(
                     """INSERT INTO client_items (client_id, barcode, description_el, description_en,
                        taric_code, hs4, taric_description, confidence, ai_rationale, taric_source,
-                       verified, source, brand, quantity, categories, analysis, catalog_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       verified, source, brand, quantity, categories, analysis, extra, catalog_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (item.client_id, item.barcode, item.description_el, item.description_en,
                      item.taric_code, item.hs4, item.taric_description, item.confidence,
                      item.ai_rationale, item.taric_source, item.verified, item.source,
-                     item.brand, item.quantity, item.categories, item.analysis, item.catalog_id),
+                     item.brand, item.quantity, item.categories, item.analysis, item.extra,
+                     item.catalog_id),
                 )
     return len(items)
 
@@ -382,6 +383,39 @@ def update_client_item(item: ClientItem) -> bool:
         return cur.rowcount > 0
 
 
+def bulk_update_client_items(items: list[ClientItem]) -> int:
+    """Μαζική ενημέρωση TARIC πεδίων σε ΜΙΑ transaction (για match-all 4k-10k κωδικών).
+
+    Όπως και το `bulk_upsert_client_items`, αποφεύγει το per-row connection+commit
+    overhead του `update_client_item` (~8ms/γραμμή -> λεπτά για 10k). Επιστρέφει #γραμμών.
+    """
+    if not items:
+        return 0
+    with connect() as conn:
+        for item in items:
+            conn.execute(
+                """UPDATE client_items SET barcode=?, description_el=?, description_en=?, taric_code=?,
+                   hs4=?, taric_description=?, confidence=?, ai_rationale=?, taric_source=?,
+                   verified=?, source=?, brand=?, quantity=?, categories=?, analysis=?, catalog_id=?,
+                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (item.barcode, item.description_el, item.description_en, item.taric_code, item.hs4,
+                 item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
+                 item.verified, item.source, item.brand, item.quantity, item.categories,
+                 item.analysis, item.catalog_id, item.id),
+            )
+    return len(items)
+
+
+def delete_client_items(item_ids: list[int]) -> int:
+    """Μαζική διαγραφή σε ΜΙΑ transaction (για select-all -> διαγραφή)."""
+    ids = [int(i) for i in item_ids if i]
+    if not ids:
+        return 0
+    with connect() as conn:
+        conn.executemany("DELETE FROM client_items WHERE id=?", [(i,) for i in ids])
+    return len(ids)
+
+
 def delete_client_item(item_id: int) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM client_items WHERE id=?", (item_id,))
@@ -409,6 +443,7 @@ def _row_to_client_item(row: sqlite3.Row) -> ClientItem:
         quantity=(row["quantity"] if "quantity" in keys else "") or "",
         categories=(row["categories"] if "categories" in keys else "") or "",
         analysis=(row["analysis"] if "analysis" in keys else "") or "",
+        extra=(row["extra"] if "extra" in keys else "") or "",
         catalog_id=row["catalog_id"], created_at=row["created_at"], updated_at=row["updated_at"],
     )
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHeaderView, QLabel, QSizePolicy,
+    QAbstractItemView, QFrame, QHeaderView, QLabel, QProgressBar, QSizePolicy,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -83,6 +83,7 @@ class StatTile(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
+        self._value = QLabel(str(value))
         self._value.setObjectName("tileValue")
         self._value.setMinimumHeight(34)
         self._value.setStyleSheet("font-size: 24px; font-weight: 700; background: transparent;")
@@ -101,6 +102,65 @@ class StatTile(QFrame):
         if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
             self.clicked.emit()
         super().mouseReleaseEvent(event)
+
+
+class BusyOverlay(QWidget):
+    """Ημιδιαφανές overlay με μήνυμα + indeterminate progress bar.
+
+    Σκεπάζει τον parent όσο τρέχει μια αργή εργασία ώστε το πρόγραμμα να μη ΦΑΙΝΕΤΑΙ
+    κολλημένο. Ακολουθεί αυτόματα το μέγεθος του parent (event filter). Χρήση:
+        self._busy = BusyOverlay(self)
+        self._busy.start("Εισαγωγή…"); … ; self._busy.stop()
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("busyOverlay")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(
+            "#busyOverlay { background: rgba(3, 8, 18, 0.62); }"
+            "#busyCard { background: palette(window); border-radius: 14px; }")
+        self.hide()
+
+        outer = QVBoxLayout(self)
+        outer.setAlignment(Qt.AlignCenter)
+        card = QFrame()
+        card.setObjectName("busyCard")
+        card.setMinimumWidth(320)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(26, 22, 26, 22)
+        cl.setSpacing(14)
+        self._label = QLabel("Επεξεργασία…")
+        self._label.setObjectName("h2")
+        self._label.setWordWrap(True)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 0)          # indeterminate (κινούμενο)
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(10)
+        cl.addWidget(self._label)
+        cl.addWidget(self._bar)
+        outer.addWidget(card)
+
+        parent.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if obj is self.parent() and event.type() in (QEvent.Resize, QEvent.Move):
+            self.setGeometry(self.parent().rect())
+        return False
+
+    def start(self, message: str = "Επεξεργασία…") -> None:
+        self._label.setText(message)
+        self.setGeometry(self.parent().rect())
+        self.raise_()
+        self.show()
+
+    def set_message(self, message: str) -> None:
+        if message:
+            self._label.setText(message)
+
+    def stop(self) -> None:
+        self.hide()
 
 
 def section_label(text: str) -> QLabel:
