@@ -199,19 +199,22 @@ class CodebookPage(QWidget):
         if not rows:
             QMessageBox.information(self, "Import", "Δεν βρέθηκαν γραμμές.")
             return
+        # Μαζική εισαγωγή σε ΜΙΑ transaction (4k-10k κωδικοί σε δευτερόλεπτα, όχι λεπτά).
+        items, catalog_items = [], []
         for r in rows:
-            item = ClientItem(
+            desc_el = r.description if _is_greek(r.description) else ""
+            desc_en = r.description if not _is_greek(r.description) else ""
+            hs4 = r.taric_code[:4] if r.taric_code else ""
+            src = "manual" if r.taric_code else ""
+            items.append(ClientItem(
                 client_id=self._client_id, barcode=r.barcode,
-                description_el=r.description if _is_greek(r.description) else "",
-                description_en=r.description if not _is_greek(r.description) else "",
-                taric_code=r.taric_code, hs4=r.taric_code[:4] if r.taric_code else "",
-                taric_source="manual" if r.taric_code else "", source="excel",
-            )
-            repo.upsert_client_item(item)
-            repo.upsert_catalog(CatalogItem(
-                barcode=r.barcode, description_el=item.description_el,
-                description_en=item.description_en, taric_code=r.taric_code,
-                hs4=item.hs4, taric_source=item.taric_source, source="excel"))
+                description_el=desc_el, description_en=desc_en,
+                taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel"))
+            catalog_items.append(CatalogItem(
+                barcode=r.barcode, description_el=desc_el, description_en=desc_en,
+                taric_code=r.taric_code, hs4=hs4, taric_source=src, source="excel"))
+        repo.bulk_upsert_client_items(items)
+        repo.bulk_upsert_catalog(catalog_items)
         self.reload()
         QMessageBox.information(self, "Import", f"Εισήχθησαν {len(rows)} γραμμές.")
 

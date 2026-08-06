@@ -102,10 +102,22 @@ _IDF: dict[str, float] = {}
 _IDF_N: int = 0
 _IDF_ROWCOUNT: int = -1
 
+# Cache του row_count: το `repo.taric_row_count()` ανοίγει ΝΕΑ SQLite connection (PRAGMA
+# setup) — και καλούνταν σε ΚΑΘΕ _w()/_row_tokens_cached() → εκατοντάδες connections ανά
+# match (το πραγματικό bottleneck σε bulk). Το κρατάμε cached, refresh 1 φορά ανά match.
+_RC: int = -1
+
+
+def _rowcount(force: bool = False) -> int:
+    global _RC
+    if force or _RC < 0:
+        _RC = repo.taric_row_count()
+    return _RC
+
 
 def _idf() -> dict[str, float]:
     global _IDF, _IDF_N, _IDF_ROWCOUNT
-    rc = repo.taric_row_count()
+    rc = _rowcount()
     if rc == _IDF_ROWCOUNT and _IDF:
         return _IDF
     df: dict[str, int] = {}
@@ -152,8 +164,30 @@ def _row_text(row) -> str:
     return f"{el} {en}"
 
 
+# Cache row-tokens ανά code: η ονοματολογία είναι ΣΤΑΤΙΚΗ, οπότε τα ίδια candidate rows
+# tokenize-άρονται ξανά-ξανά σε κάθε match (NFKD+stem, Python-heavy) — το πραγματικό
+# bottleneck σε bulk 4k-10k κωδικών. Invalidate ανά row_count (νέο import ονοματολογίας).
+_ROW_TOKENS: dict[str, set[str]] = {}
+_ROW_TOKENS_RC: int = -1
+
+
+def _row_tokens_cached(row) -> set[str]:
+    global _ROW_TOKENS, _ROW_TOKENS_RC
+    rc = _rowcount()
+    if rc != _ROW_TOKENS_RC:
+        _ROW_TOKENS = {}
+        _ROW_TOKENS_RC = rc
+    code = getattr(row, "code", "")
+    cached = _ROW_TOKENS.get(code)
+    if cached is None:
+        cached = _tokens(_row_text(row))
+        if code:
+            _ROW_TOKENS[code] = cached
+    return cached
+
+
 def _score(query_tokens: set[str], row) -> float:
-    row_tokens = _tokens(_row_text(row))
+    row_tokens = _row_tokens_cached(row)
     if not row_tokens or not query_tokens:
         return 0.0
     matched = [q for q in query_tokens if _token_matches(q, row_tokens)]
@@ -173,6 +207,7 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
     query = f"{description_el} {description_en}".strip()
     if not query:
         return []
+    _rowcount(force=True)  # 1 DB hit ανά match· τα _idf/_w/_row_tokens_cached το ξαναχρησιμοποιούν
     # Αφαίρεσε τα brand tokens από το scoring (η μάρκα δεν είναι κριτήριο δασμολογικής κλάσης).
     brand_tokens = _tokens(brand) if brand else set()
     qtokens = _tokens(query) - brand_tokens
@@ -196,6 +231,10 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
     n = max(len(primary), 1)
     scored = []
     for code, r in pool.items():
+        # Απόκλεισε section/chapter/intermediate headers (level<4): ΠΟΤΕ δεν είναι έγκυρη
+        # κατάταξη — είναι μόνο κόμβοι ιεραρχίας (π.χ. 0900000000 «COFFEE, TEA…» = κεφ. 09).
+        if 0 < getattr(r, "level", 0) < 4:
+            continue
         s = _score(qtokens, r)
         if s <= 0:
             continue
@@ -305,8 +344,13 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
                                ai_rationale=ranked.get("rationale", ""), taric_source="ai",
                                candidates=cand_dicts)
 
-    # fallback χωρίς AI: το semantic «οδηγεί» ΜΟΝΟ αν συμφωνεί με το FTS στο HS4
-    # (ή αν το FTS είναι κενό) — αλλιώς εμπιστευόμαστε το λεξιλογικά ακριβές FTS.
+    # fallback χωρίς AI: το semantic (εννοιολογικό) είναι αξιόπιστο σε ΚΑΘΑΡΙΣΜΕΝΟ αγγλικό
+    # query (English-first) — π.χ. «instant coffee» -> 2101 όπου το λεξιλογικό FTS μπερδεύεται
+    # (0901 κόκκοι / 8419 μηχανή). «Οδηγεί» όταν είναι ΣΙΓΟΥΡΟ (cosine υψηλό) ή όταν συμφωνεί με
+    # το FTS στο HS4. Αλλιώς εμπιστευόμαστε το FTS.
+    # semantic = ΕΠΙΒΕΒΑΙΩΤΗΣ: «οδηγεί» μόνο όταν ΣΥΜΦΩΝΕΙ με το FTS στο HS4 (ή FTS κενό).
+    # Το no-AI μονοπάτι είναι best-effort για bulk· η ακριβής κατάταξη (π.χ. instant coffee
+    # -> 2101, roasted beans -> 0901) γίνεται από το AI που διασταυρώνει την περιγραφή.
     if sem and sem_agrees and sem_top >= 0.45 and sem_top >= fts_top:
         top_row = sem[0][1]
         return MatchResult(taric_code=top_row.code, hs4=top_row.hs4 or top_row.code[:4],

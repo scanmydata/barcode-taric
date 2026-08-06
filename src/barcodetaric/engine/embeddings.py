@@ -192,7 +192,9 @@ def semantic_candidates(query: str, *, top: int = 6, min_score: float = 0.30,
             continue
         by_code[code] = True
         row = repo.get_taric_row(code)
-        if row is not None:
+        # Απόκλεισε section/chapter/intermediate headers (level<4): ποτέ έγκυρη κατάταξη
+        # (π.χ. 0900000000 «COFFEE, TEA…»). Ίδιο φίλτρο με το FTS tier.
+        if row is not None and not (0 < getattr(row, "level", 0) < 4):
             out.append((score, row))
     return out
 

@@ -160,6 +160,44 @@ def upsert_catalog(item: CatalogItem) -> int:
         return cid
 
 
+def bulk_upsert_catalog(items: list[CatalogItem]) -> int:
+    """Μαζικό upsert στην κεντρική βάση γνώσης σε ΜΙΑ transaction (import 4k-10k κωδικών)."""
+    if not items:
+        return 0
+    with connect() as conn:
+        for item in items:
+            existing = conn.execute(
+                "SELECT id FROM catalog WHERE barcode=?", (item.barcode,)
+            ).fetchone() if item.barcode else None
+            if existing:
+                cid = int(existing["id"])
+                conn.execute(
+                    """UPDATE catalog SET description_el=?, description_en=?, taric_code=?, hs4=?,
+                       taric_description=?, confidence=?, ai_rationale=?, taric_source=?, verified=?,
+                       source=?, brand=?, quantity=?, categories=?, analysis=?,
+                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (item.description_el, item.description_en, item.taric_code, item.hs4,
+                     item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
+                     item.verified, item.source, item.brand, item.quantity, item.categories,
+                     item.analysis, cid),
+                )
+            else:
+                cur = conn.execute(
+                    """INSERT INTO catalog (barcode, description_el, description_en, taric_code, hs4,
+                       taric_description, confidence, ai_rationale, taric_source, verified, source,
+                       brand, quantity, categories, analysis)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (item.barcode, item.description_el, item.description_en, item.taric_code, item.hs4,
+                     item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
+                     item.verified, item.source, item.brand, item.quantity, item.categories,
+                     item.analysis),
+                )
+                cid = int(cur.lastrowid)
+            _fts_upsert(conn, "catalog_fts", cid,
+                        _fold(item.description_el, item.description_en, item.barcode, item.categories))
+    return len(items)
+
+
 def get_catalog_by_barcode(barcode: str) -> Optional[CatalogItem]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM catalog WHERE barcode=?", (barcode,)).fetchone()
@@ -272,6 +310,45 @@ def upsert_client_item(item: ClientItem) -> int:
              item.brand, item.quantity, item.categories, item.analysis, item.catalog_id),
         )
         return int(cur.lastrowid)
+
+
+def bulk_upsert_client_items(items: list[ClientItem]) -> int:
+    """Μαζική εισαγωγή/ενημέρωση κωδικολογίου σε ΜΙΑ transaction (για import 4k-10k κωδικών).
+
+    Το `upsert_client_item` ανοίγει νέα σύνδεση + commit ανά γραμμή (~8ms) — 10k γραμμές =
+    λεπτά. Εδώ μία σύνδεση/transaction κάνει το ίδιο σε δευτερόλεπτα. Επιστρέφει #γραμμών.
+    """
+    if not items:
+        return 0
+    with connect() as conn:
+        for item in items:
+            existing = conn.execute(
+                "SELECT id FROM client_items WHERE client_id=? AND barcode=?",
+                (item.client_id, item.barcode),
+            ).fetchone() if item.barcode else None
+            if existing:
+                conn.execute(
+                    """UPDATE client_items SET description_el=?, description_en=?, taric_code=?, hs4=?,
+                       taric_description=?, confidence=?, ai_rationale=?, taric_source=?, verified=?,
+                       source=?, brand=?, quantity=?, categories=?, analysis=?, catalog_id=?,
+                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (item.description_el, item.description_en, item.taric_code, item.hs4,
+                     item.taric_description, item.confidence, item.ai_rationale, item.taric_source,
+                     item.verified, item.source, item.brand, item.quantity, item.categories,
+                     item.analysis, item.catalog_id, int(existing["id"])),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO client_items (client_id, barcode, description_el, description_en,
+                       taric_code, hs4, taric_description, confidence, ai_rationale, taric_source,
+                       verified, source, brand, quantity, categories, analysis, catalog_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (item.client_id, item.barcode, item.description_el, item.description_en,
+                     item.taric_code, item.hs4, item.taric_description, item.confidence,
+                     item.ai_rationale, item.taric_source, item.verified, item.source,
+                     item.brand, item.quantity, item.categories, item.analysis, item.catalog_id),
+                )
+    return len(items)
 
 
 def get_client_item(item_id: int) -> Optional[ClientItem]:
