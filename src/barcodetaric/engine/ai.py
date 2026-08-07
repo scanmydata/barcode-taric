@@ -61,6 +61,17 @@ _EXCLUDE_FREE = (
 _WORKING_MODEL: Optional[str] = None
 
 
+# Μοντέλα ΑΚΑΤΑΛΛΗΛΑ για τελωνειακή ταξινόμηση/JSON (κώδικας/όραση/μαθηματικά/ασφάλεια):
+# απαντούν μεν, αλλά είναι αργά/κακά στο task — αιτία «κολλάει η αντιστοίχιση».
+_UNSUITABLE_MARKERS = ("code", "coder", "-vl", "vision", "-math", "guard", "rerank",
+                       "embed", "moderation", "distill")
+
+
+def _is_suitable_model(model: str) -> bool:
+    low = (model or "").lower()
+    return not any(m in low for m in _UNSUITABLE_MARKERS)
+
+
 def _ensure_free(model: str) -> str:
     """Εγγύηση ότι χρησιμοποιείται ΜΟΝΟ δωρεάν μοντέλο OpenRouter (:free suffix)."""
     model = (model or "").strip() or DEFAULT_FREE_MODEL
@@ -163,7 +174,8 @@ def best_free_model(timeout: int = 12, tries: int = 4) -> Optional[str]:
     api_key = SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         return None
-    candidates = list_free_models(timeout=timeout)[:tries] or [DEFAULT_FREE_MODEL, "openrouter/free"]
+    suitable = [m for m in list_free_models(timeout=timeout) if _is_suitable_model(m)]
+    candidates = suitable[:tries] or [DEFAULT_FREE_MODEL, "openrouter/free"]
     for mid in candidates:
         try:
             if _openrouter_call(mid, "Reply with the single word OK.", timeout):
@@ -205,8 +217,26 @@ def auto_configure(progress=None) -> dict:
         except Exception as exc:  # noqa: BLE001
             debug(f"auto_configure custom failed: {exc}")
 
-    # 2) OpenRouter: εγγύηση ΔΟΥΛΕΥΟΝΤΟΣ δωρεάν μοντέλου.
+    # 2) Groq: ΔΩΡΕΑΝ & ΠΟΛΥ ΓΡΗΓΟΡΟ (llama-3.3-70b, ~1-2s/κλήση) — για μαζική αντιστοίχιση
+    # είναι πολύ καλύτερο από τα αργά/ουρωμένα free μοντέλα του OpenRouter. Αν υπάρχει key,
+    # ανέβασέ το ΠΡΩΤΟ στη σειρά.
+    if SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY"):
+        _say("Έλεγχος Groq (γρήγορο δωρεάν)…")
+        try:
+            if _groq("Reply with the single word OK.", 12):
+                order = list(SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER)
+                if "groq" in order and order[:2] != ["custom", "groq"] and order[:1] != ["groq"]:
+                    order = ["groq"] + [p for p in order if p != "groq"]
+                    SETTINGS.set("ai_provider_order", order)
+                    SETTINGS.save()
+                return {"provider": "groq", "model": SETTINGS.get("groq_model") or "llama-3.3-70b",
+                        "message": "Χρήση Groq (γρήγορο δωρεάν) για την αντιστοίχιση."}
+        except Exception as exc:  # noqa: BLE001
+            debug(f"auto_configure groq failed: {exc}")
+
+    # 3) OpenRouter: εγγύηση ΚΑΛΟΥ & ΔΟΥΛΕΥΟΝΤΟΣ δωρεάν μοντέλου.
     if SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY"):
+        global _WORKING_MODEL
         current = _ensure_free(SETTINGS.get("openrouter_model"))
         _say(f"Έλεγχος μοντέλου OpenRouter ({current})…")
         ok = False
@@ -214,18 +244,25 @@ def auto_configure(progress=None) -> dict:
             ok = bool(_openrouter_call(current, "Reply with the single word OK.", 12))
         except Exception:  # noqa: BLE001
             ok = False
-        if ok:
-            global _WORKING_MODEL
+        # Κράτα το αποθηκευμένο ΜΟΝΟ αν δουλεύει ΚΑΙ είναι κατάλληλο (instruct, όχι code/
+        # specialized). Ένα code-model απαντά μεν, αλλά είναι αργό & κακό σε ταξινόμηση/JSON
+        # (η αιτία του «κολλάει η αντιστοίχιση») -> προτίμησε καλύτερο general μοντέλο.
+        if ok and _is_suitable_model(current):
             _WORKING_MODEL = current
             return {"provider": "openrouter", "model": current,
                     "message": f"Ενεργό μοντέλο OpenRouter: {current}"}
-        _say("Το αποθηκευμένο μοντέλο δεν απαντά — αναζήτηση καλύτερου δωρεάν…")
+        reason = ("δεν απαντά" if not ok else "ακατάλληλο για ταξινόμηση (code/specialized)")
+        _say(f"Το αποθηκευμένο μοντέλο {reason} — αναζήτηση καλύτερου δωρεάν…")
         picked = best_free_model()
         if picked:
             SETTINGS.set("openrouter_model", picked)
             SETTINGS.save()
             return {"provider": "openrouter", "model": picked,
                     "message": f"Επιλέχθηκε αυτόματα δωρεάν μοντέλο: {picked}"}
+        if ok:   # δεν βρέθηκε καλύτερο -> κράτα το αποθηκευμένο που τουλάχιστον απαντά
+            _WORKING_MODEL = current
+            return {"provider": "openrouter", "model": current,
+                    "message": f"Ενεργό μοντέλο OpenRouter: {current}"}
 
     # 3) fallback
     if SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY"):
@@ -565,7 +602,7 @@ def rank_taric(description: str, candidates: list[dict[str, Any]]) -> Optional[d
     return {"code": code, "rationale": str(data.get("rationale", "")), "confidence": confidence}
 
 
-def rank_taric_batch(products: list[dict[str, Any]], batch_size: int = 12
+def rank_taric_batch(products: list[dict[str, Any]], batch_size: int = 20
                      ) -> list[Optional[dict[str, Any]]]:
     """Batch κατάταξη: πολλά προϊόντα ΑΝΑ κλήση AI (κλιμάκωση σε 4k-10k κωδικούς).
 
@@ -614,7 +651,8 @@ def _rank_batch_chunk(chunk: list[dict[str, Any]]) -> Optional[list[Optional[dic
         "\"confidence\": <0..1>, \"rationale\": \"<μία σύντομη ελληνική πρόταση>\"}]\n\n"
         f"{body}"
     )
-    raw = chat(prompt, timeout=60, max_len=2200)
+    # Μεγαλύτερα batches (slow free tiers) -> γενναιόδωρο timeout & output limit.
+    raw = chat(prompt, timeout=120, max_len=6000)
     arr = _extract_json_array(raw)
     if arr is None:
         return None

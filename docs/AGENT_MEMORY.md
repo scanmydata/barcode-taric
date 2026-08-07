@@ -72,6 +72,33 @@ needed, run it in a **subprocess** (not just a QThread).
 - **Auto-backup** `db.backup_db(tag)` (SQLite online-backup API → `data-dir/backups/`, keeps the
   10 most recent) runs before every import and export; it must never break the flow.
 
+## AI provider speed is the real bulk bottleneck (not code)
+- **Free OpenRouter `:free` models are slow/queued** — a 2-item batch took ~65s in testing. At
+  that rate 10k = hours, not the ~15-20 min the batch math assumes (~2s/call). Retrieval is
+  already ~12/s; the AI latency dominates.
+- **Code/specialized models respond but are unsuitable** (slow + bad JSON/classification). The
+  saved `cohere/north-mini-code:free` was the "matching hangs" cause. `ai._is_suitable_model`
+  rejects names with code/vision/math/guard/embed markers; `auto_configure` upgrades away from them.
+- **Groq (llama-3.3-70b) is the fast free option** (~1-2s/call, needs a free key from
+  console.groq.com). `auto_configure` prefers Groq (put first in order) when a key exists, then a
+  working local LLM, then a suitable OpenRouter free model. Batch size bumped to 20 to amortize
+  slow-tier latency. For real 10k speed the user's **local LLM (ollama)** or **Groq** is required —
+  free OpenRouter alone won't hit "minutes".
+- **auto_configure** runs at startup in a worker (`main_window._startup_ai_autoconfigure`,
+  gated by `ai_auto_configure`). Prefer-local honors the user's "if local LLM configured, use it".
+
+## Local web search for the local-LLM machine
+`web_search` has an `open_websearch` tier (Aas-ee/open-webSearch): a local multi-engine server
+(Bing/DDG/Brave/Startpage…), **no API keys**, `POST {open_websearch_url}/search` → JSON array.
+Pure `urllib` (no new Python dep, like SearXNG). Setup: `docs/open-websearch-setup.md` +
+`docs/docker-compose.open-websearch.yml`. Runs on port 3000; set `open_websearch_url` in settings.
+
+## Offline meaning-preserving translation
+`translation_api` has an `argos` tier (Argos Translate / OPUS-MT, `[translate]` extra) — offline
+neural EL→EN that keeps meaning far better than MyMemory's lookup. `to_english_offline()` uses only
+Argos (no network) and `match_batch` calls it to build better English candidate queries without a
+per-item network hang. Model downloads once; graceful skip if not installed.
+
 ## Dev environment
 - No `.venv` in repo. Default `py` is Python 3.14; PySide6/scikit-learn want **3.12**
   (uv-managed 3.12.6 on this machine). `PYTHONUTF8=1 .venv/Scripts/python -m pytest` → **46 tests**,

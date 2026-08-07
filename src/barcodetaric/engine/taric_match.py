@@ -388,7 +388,7 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
     return MatchResult(taric_source="none")
 
 
-def match_batch(items: list[dict], progress=None, batch_size: int = 12) -> list[MatchResult]:
+def match_batch(items: list[dict], progress=None, batch_size: int = 20) -> list[MatchResult]:
     """Μαζική αντιστοίχιση με BATCH-AI (πολλά προϊόντα ανά κλήση AI) — κλιμάκωση σε 4k-10k.
 
     `items[i]` = {description_el, description_en, barcode, brand, quantity, categories,
