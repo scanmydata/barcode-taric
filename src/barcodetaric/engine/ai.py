@@ -175,6 +175,65 @@ def best_free_model(timeout: int = 12, tries: int = 4) -> Optional[str]:
     return None
 
 
+def auto_configure(progress=None) -> dict:
+    """Αυτόματη επιλογή του ΚΑΛΥΤΕΡΟΥ διαθέσιμου AI provider (κλήση σε background worker).
+
+    Προτεραιότητα:
+      1) **Τοπικό LLM** (custom endpoint) αν έχει οριστεί & απαντά -> μπαίνει ΠΡΩΤΟ στη σειρά.
+      2) **OpenRouter**: αν το αποθηκευμένο μοντέλο δεν απαντά (π.χ. code-model/αποσυρμένο),
+         ανανεώνει τη λίστα δωρεάν μοντέλων & διαλέγει το 1ο που όντως δουλεύει.
+      3) Αλλιώς αφήνει τη σειρά ως έχει (groq/duckduckgo/pollinations).
+
+    Λύνει το «κολλάει η αντιστοίχιση»: κακό/αργό αποθηκευμένο μοντέλο -> auto-αντικατάσταση.
+    Επιστρέφει {"provider","model","message"}.
+    """
+    def _say(m):
+        if progress:
+            progress(m)
+
+    # 1) Τοπικό LLM πρώτο (ό,τι ζήτησε ο χρήστης: αν βρεθεί local config, προτίμησέ το).
+    if (SETTINGS.get("custom_ai_base_url") or "").strip():
+        _say("Έλεγχος τοπικού LLM…")
+        order = list(SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER)
+        if order[:1] != ["custom"]:
+            SETTINGS.set("ai_provider_order", ["custom"] + [p for p in order if p != "custom"])
+            SETTINGS.save()
+        try:
+            if _custom("Reply with the single word OK.", 20):
+                return {"provider": "custom", "model": SETTINGS.get("custom_ai_model") or "",
+                        "message": "Χρήση τοπικού LLM (custom endpoint)."}
+        except Exception as exc:  # noqa: BLE001
+            debug(f"auto_configure custom failed: {exc}")
+
+    # 2) OpenRouter: εγγύηση ΔΟΥΛΕΥΟΝΤΟΣ δωρεάν μοντέλου.
+    if SETTINGS.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY"):
+        current = _ensure_free(SETTINGS.get("openrouter_model"))
+        _say(f"Έλεγχος μοντέλου OpenRouter ({current})…")
+        ok = False
+        try:
+            ok = bool(_openrouter_call(current, "Reply with the single word OK.", 12))
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            global _WORKING_MODEL
+            _WORKING_MODEL = current
+            return {"provider": "openrouter", "model": current,
+                    "message": f"Ενεργό μοντέλο OpenRouter: {current}"}
+        _say("Το αποθηκευμένο μοντέλο δεν απαντά — αναζήτηση καλύτερου δωρεάν…")
+        picked = best_free_model()
+        if picked:
+            SETTINGS.set("openrouter_model", picked)
+            SETTINGS.save()
+            return {"provider": "openrouter", "model": picked,
+                    "message": f"Επιλέχθηκε αυτόματα δωρεάν μοντέλο: {picked}"}
+
+    # 3) fallback
+    if SETTINGS.get("groq_api_key") or os.getenv("GROQ_API_KEY"):
+        return {"provider": "groq", "model": SETTINGS.get("groq_model") or "",
+                "message": "Χρήση Groq."}
+    return {"provider": None, "model": "", "message": "Κανένας AI provider δεν ρυθμίστηκε."}
+
+
 def test_providers(timeout: int = 12) -> list[tuple[str, bool, str]]:
     """Debugger: δοκιμάζει κάθε provider της αλυσίδας & επιστρέφει (name, ok, μήνυμα)."""
     order = SETTINGS.get("ai_provider_order") or _DEFAULT_ORDER

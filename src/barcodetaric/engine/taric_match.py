@@ -408,6 +408,7 @@ def match_batch(items: list[dict], progress=None, batch_size: int = 12) -> list[
 
     pending_idx: list[int] = []
     queries: list[str] = []
+    pending_clean: list[tuple[str, str]] = []   # (clean_el, clean_en) ανά pending item
     for i, it in enumerate(items):
         el = (it.get("description_el") or "").strip()
         en = (it.get("description_en") or "").strip()
@@ -431,10 +432,16 @@ def match_batch(items: list[dict], progress=None, batch_size: int = 12) -> list[
                                          confidence=pred.confidence, taric_source="ml",
                                          ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
                 continue
-        # χρειάζεται retrieval + AI
+        # χρειάζεται retrieval + AI. Αν λείπει EN, δοκίμασε OFFLINE μετάφραση (Argos) — βελτιώνει
+        # πολύ το recall υποψηφίων (English-first) ΧΩΡΙΣ δικτυακή κλήση/κρέμασμα (δεν χτυπά MyMemory).
+        if el and not en:
+            off = translation_api.to_english_offline(el)
+            if off:
+                en = off
         clean_el = clean_for_classification(el, brand=it.get("brand", ""))
         clean_en = clean_for_classification(en, brand=it.get("brand", ""))
         pending_idx.append(i)
+        pending_clean.append((clean_el, clean_en))
         queries.append(f"{clean_en} {clean_el}".strip() or f"{en} {el}".strip())
 
     if pending_idx:
@@ -445,8 +452,7 @@ def match_batch(items: list[dict], progress=None, batch_size: int = 12) -> list[
         cand_lists: list[list[dict]] = []
         for k, i in enumerate(pending_idx):
             it = items[i]
-            clean_el = clean_for_classification(it.get("description_el", ""), brand=it.get("brand", ""))
-            clean_en = clean_for_classification(it.get("description_en", ""), brand=it.get("brand", ""))
+            clean_el, clean_en = pending_clean[k]
             cands = fts_candidates(clean_el, clean_en, brand=it.get("brand", ""), top=8)
             if _is_food_source(it.get("source", "")) and cands:
                 food = [(s, r) for s, r in cands if _is_food_chapter(r.code)]

@@ -411,6 +411,45 @@ def _via_searxng(query: str, limit: int) -> list[dict[str, str]]:
     return out
 
 
+def _via_open_websearch(query: str, limit: int) -> list[dict[str, str]]:
+    """open-webSearch (Aas-ee/open-webSearch) — τοπικός multi-engine server ΧΩΡΙΣ API keys.
+
+    Ιδανικό για το μηχάνημα του τοπικού LLM: `npx open-websearch@latest` ή Docker στη
+    θύρα 3000 και ψάχνει Bing/DuckDuckGo/Brave/Startpage κ.ά. μαζί (scraping, no keys).
+    POST {base}/search {query,limit,engines} -> JSON array [{title,url,description,...}].
+    Χωρίς `open_websearch_url` -> skip. Καμία νέα Python εξάρτηση (μόνο urllib, όπως SearXNG).
+    """
+    base = (SETTINGS.get("open_websearch_url") or "").strip().rstrip("/")
+    if not base:
+        return []
+    try:
+        timeout = int(SETTINGS.get("open_websearch_timeout") or 15)
+    except (TypeError, ValueError):
+        timeout = 15
+    body: dict = {"query": query, "limit": limit}
+    engines = SETTINGS.get("open_websearch_engines")   # π.χ. ["bing","duckduckgo"]
+    if engines:
+        body["engines"] = engines
+    try:
+        payload = http_json(base + "/search", method="POST", body=body, timeout=timeout,
+                            headers={"Content-Type": "application/json"})
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        debug(f"open-webSearch failed (running on {base}?): {exc}")
+        return []
+    # Το /search επιστρέφει array· κάποιες εκδόσεις το τυλίγουν σε {results:[...]}.
+    items = payload if isinstance(payload, list) else (
+        payload.get("results") or payload.get("data") or [] if isinstance(payload, dict) else [])
+    out: list[dict[str, str]] = []
+    for it in items[:limit]:
+        if not isinstance(it, dict):
+            continue
+        out.append({"title": str(it.get("title", "")),
+                    "url": str(it.get("url", "")),
+                    "snippet": strip_tags(str(it.get("description", "")
+                                          or it.get("snippet", "") or it.get("content", "")))})
+    return out
+
+
 def _via_brave(query: str, limit: int) -> list[dict[str, str]]:
     """Brave Search API — επίσημο, γρήγορο, δομημένο JSON, ανεξάρτητο index.
 
@@ -482,6 +521,7 @@ def _via_duckduckgo(query: str, limit: int) -> list[dict[str, str]]:
 
 _TIERS = {
     "searxng": _via_searxng,
+    "open_websearch": _via_open_websearch,
     "openserp": _via_openserp,
     "brave": _via_brave,
     "cloudscraper": _via_cloudscraper,
@@ -496,7 +536,7 @@ _TIERS = {
 # επίσημο API (με key). cloudscraper = optional anti-bot tier για Cloudflare/bot pages.
 # headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Bing/DDG), ισχυρό fallback που λύνει ό,τι δεν λύνουν
 # τα ελαφριά tiers (~3-5s). google_cse/googlesearch/openserp = extra.
-_DEFAULT_ORDER = ["searxng", "duckduckgo", "brave", "cloudscraper", "curl_cffi", "headless", "google_cse", "googlesearch", "openserp"]
+_DEFAULT_ORDER = ["searxng", "open_websearch", "duckduckgo", "brave", "cloudscraper", "curl_cffi", "headless", "google_cse", "googlesearch", "openserp"]
 
 
 def search_web(query: str, *, limit: int = 6) -> list[dict[str, str]]:

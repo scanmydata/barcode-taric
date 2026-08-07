@@ -1,0 +1,19 @@
+# open-webSearch — τοπικός multi-engine search server (χωρίς API keys).
+# Σήκωσέ το στο μηχάνημα του τοπικού LLM:  docker compose -f docs/docker-compose.open-websearch.yml up -d
+# Μετά στο BarcodeTaric: Ρυθμίσεις -> open_websearch_url = http://<host>:3000
+services:
+  open-websearch:
+    image: ghcr.io/aas-ee/open-web-search:latest
+    container_name: open-websearch
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MODE: http
+      PORT: "3000"
+      ENABLE_CORS: "true"
+      CORS_ORIGIN: "*"
+      DEFAULT_SEARCH_ENGINE: duckduckgo
+      # SEARCH_MODE: auto        # request | auto | playwright (browser-enhanced)
+      # USE_PROXY: "false"
+      # PROXY_URL: http://host:port

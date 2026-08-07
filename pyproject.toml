@@ -22,6 +22,9 @@ semantic = ["sentence-transformers>=2.6", "numpy>=1.24"]
 # Headless browser search tier (πραγματικός Chrome μέσω Selenium). Προαιρετικό — το app
 # δουλεύει και χωρίς αυτό (πέφτει σε DuckDuckGo/SearXNG). Χρειάζεται εγκατεστημένο Chrome.
 headless = ["selenium>=4.20"]
+# OFFLINE νευρωνική μετάφραση EL<->EN (Argos/OPUS-MT) — διατηρεί το νόημα, χωρίς δίκτυο.
+# Το μοντέλο γλώσσας κατεβαίνει μία φορά. Χρήσιμο για μαζική αντιστοίχιση χωρίς κρέμασμα.
+translate = ["argostranslate>=1.9"]
 # Optional anti-bot / captcha handling for Cloudflare and similar protections.
 # ΣΗΜ: το undetected-chromedriver χρειάζεται `setuptools` σε Python 3.12+ (import distutils).
 anti_bot = ["cloudscraper>=1.2.0", "curl_cffi>=0.10.0", "undetected-chromedriver>=3.5.0",

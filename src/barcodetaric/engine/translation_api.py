@@ -74,6 +74,64 @@ def _mymemory(text: str, source: str, target: str, timeout: int) -> Optional[str
     return translated
 
 
+# --- Argos Translate: OFFLINE νευρωνική μετάφραση (OPUS-MT) — διατηρεί το ΝΟΗΜΑ πολύ
+# καλύτερα από το lookup του MyMemory. Optional extra ([translate]): lazy import, το
+# μοντέλο el<->en κατεβαίνει ΜΙΑ φορά, μετά δουλεύει τελείως offline. ---
+_ARGOS_FAILED = False
+_ARGOS_INSTALLED: set[tuple[str, str]] = set()
+
+
+def _argos_available() -> bool:
+    global _ARGOS_FAILED
+    if _ARGOS_FAILED or SETTINGS.get("argos_enabled") is False:
+        return False
+    try:
+        import argostranslate.translate  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        _ARGOS_FAILED = True
+        return False
+
+
+def _ensure_argos_pair(from_code: str, to_code: str) -> bool:
+    """Εγκαθιστά (μία φορά) το πακέτο γλώσσας from->to αν λείπει. Λήψη ~100MB την 1η φορά."""
+    if (from_code, to_code) in _ARGOS_INSTALLED:
+        return True
+    try:
+        import argostranslate.package as pkg
+        import argostranslate.translate as tr
+        installed = {(l.code) for l in tr.get_installed_languages()}
+        # Αν και οι δύο γλώσσες υπάρχουν ήδη, θεώρησέ το εντάξει.
+        if from_code in installed and to_code in installed:
+            _ARGOS_INSTALLED.add((from_code, to_code))
+            return True
+        pkg.update_package_index()
+        avail = pkg.get_available_packages()
+        match = next((p for p in avail if p.from_code == from_code and p.to_code == to_code), None)
+        if match is None:
+            return False
+        pkg.install_from_path(match.download())
+        _ARGOS_INSTALLED.add((from_code, to_code))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        debug(f"Argos install {from_code}->{to_code} failed: {exc}")
+        return False
+
+
+def _argos(text: str, source: str, target: str, timeout: int) -> Optional[str]:
+    if not _argos_available():
+        return None
+    if not _ensure_argos_pair(source, target):
+        return None
+    try:
+        import argostranslate.translate as tr
+        out = tr.translate(text, source, target)
+        return out.strip() or None if isinstance(out, str) else None
+    except Exception as exc:  # noqa: BLE001
+        debug(f"Argos translate failed: {exc}")
+        return None
+
+
 def _libretranslate(text: str, source: str, target: str, timeout: int) -> Optional[str]:
     base = (SETTINGS.get("libretranslate_url") or "").strip().rstrip("/")
     if not base:
@@ -94,14 +152,20 @@ def _libretranslate(text: str, source: str, target: str, timeout: int) -> Option
 
 
 _PROVIDERS = {
+    "argos": _argos,
     "mymemory": _mymemory,
     "libretranslate": _libretranslate,
 }
 
+# Argos ΠΡΩΤΟ (offline, διατηρεί νόημα) αν είναι εγκατεστημένο· αλλιώς παρακάμπτεται σιωπηλά.
+_DEFAULT_ORDER = ["argos", "mymemory", "libretranslate"]
+
 
 def available() -> bool:
     """True αν υπάρχει έστω ένας provider που μπορεί να μεταφράσει χωρίς LLM."""
-    order = SETTINGS.get("translation_provider_order") or ["mymemory", "libretranslate"]
+    order = SETTINGS.get("translation_provider_order") or _DEFAULT_ORDER
+    if "argos" in order and _argos_available():
+        return True
     if "mymemory" in order:
         return True                       # χωρίς key
     if "libretranslate" in order and SETTINGS.get("libretranslate_url"):
@@ -129,7 +193,7 @@ def translate(text: str, *, source: str = "auto", target: str = "en",
     if key in _CACHE:
         return _CACHE[key]
 
-    order = SETTINGS.get("translation_provider_order") or ["mymemory", "libretranslate"]
+    order = SETTINGS.get("translation_provider_order") or _DEFAULT_ORDER
     for name in order:
         fn = _PROVIDERS.get(name)
         if fn is None:
@@ -149,3 +213,25 @@ def to_english(text: str, *, timeout: int = 8) -> Optional[str]:
 
 def to_greek(text: str, *, timeout: int = 8) -> Optional[str]:
     return translate(text, source="auto", target="el", timeout=timeout)
+
+
+def to_english_offline(text: str) -> Optional[str]:
+    """EL->EN ΜΟΝΟ offline (Argos) — για μαζική αντιστοίχιση ΧΩΡΙΣ δικτυακή κλήση/κρέμασμα.
+
+    Επιστρέφει None αν το Argos δεν είναι εγκατεστημένο (ο caller κρατά το ελληνικό κείμενο).
+    """
+    text = (text or "").strip()
+    if not text or not _argos_available():
+        return None
+    src = _lang(text)
+    if src == "en":
+        return text
+    if src != "el":
+        return None
+    key = (text.lower(), "el", "en")
+    if key in _CACHE:
+        return _CACHE[key]
+    out = _argos(text, "el", "en", 8)
+    if out:
+        _CACHE[key] = out
+    return out

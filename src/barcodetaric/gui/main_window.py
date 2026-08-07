@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self._show("clients")
         self._startup_taric_check()
         self._warm_embeddings()
+        self._startup_ai_autoconfigure()
 
     # ------------------------------------------------------------- nav ----
     def _on_menu(self, name: str) -> None:
@@ -136,6 +137,19 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Η ονοματολογία TARIC ενημερώθηκε από ΕΕ ({n} κωδικοί).", 10000)
         self.taric_page.refresh()
         self._warm_embeddings()
+
+    def _startup_ai_autoconfigure(self) -> None:
+        """Στην εκκίνηση: αυτόματη επιλογή καλύτερου AI provider (προτίμηση τοπικού LLM,
+        αλλιώς δουλεύον δωρεάν μοντέλο) — σε background ώστε να μη μπλοκάρει το UI. Έτσι ένα
+        κακό/αργό αποθηκευμένο μοντέλο δεν «κολλάει» την αντιστοίχιση."""
+        from ..config import SETTINGS
+        from ..engine import ai
+        from .workers import run_async
+        if SETTINGS.get("ai_auto_configure") is False:
+            return
+        run_async(self, ai.auto_configure,
+                  on_done=lambda r: self.statusBar().showMessage((r or {}).get("message", ""), 8000),
+                  on_error=lambda _m: None)
 
     def _warm_embeddings(self) -> None:
         """Χτίζει το εννοιολογικό μοντέλο (embeddings) σε background — το ΠΡΩΤΟ build
