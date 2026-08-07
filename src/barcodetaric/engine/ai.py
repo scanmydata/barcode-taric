@@ -506,6 +506,105 @@ def rank_taric(description: str, candidates: list[dict[str, Any]]) -> Optional[d
     return {"code": code, "rationale": str(data.get("rationale", "")), "confidence": confidence}
 
 
+def rank_taric_batch(products: list[dict[str, Any]], batch_size: int = 12
+                     ) -> list[Optional[dict[str, Any]]]:
+    """Batch κατάταξη: πολλά προϊόντα ΑΝΑ κλήση AI (κλιμάκωση σε 4k-10k κωδικούς).
+
+    products: [{"query": str, "candidates": [{"code","description_el","description_en"}...]}...]
+    Επιστρέφει λίστα ΙΔΙΟΥ μήκους: {"code","rationale","confidence"} ή None ανά προϊόν.
+
+    Το AI διαβάζει ελληνικά απευθείας (χωρίς per-item δικτυακή μετάφραση). Αν το batch JSON
+    δεν διαβαστεί (μικρά free models), γίνεται fallback σε per-item `rank_taric` για ΤΟ batch.
+    """
+    results: list[Optional[dict[str, Any]]] = [None] * len(products)
+    if not products or not ai_available():
+        return results
+    for start in range(0, len(products), batch_size):
+        chunk = products[start:start + batch_size]
+        parsed = _rank_batch_chunk(chunk)
+        if parsed is None:
+            # fallback: per-item (αργό αλλά ασφαλές) για ΑΥΤΟ το batch μόνο
+            for j, p in enumerate(chunk):
+                results[start + j] = rank_taric(p.get("query", ""), p.get("candidates", []))
+            continue
+        for j, res in enumerate(parsed):
+            results[start + j] = res
+    return results
+
+
+def _rank_batch_chunk(chunk: list[dict[str, Any]]) -> Optional[list[Optional[dict[str, Any]]]]:
+    """Μία κλήση AI για ≤batch_size προϊόντα. None => αποτυχία parse (κάνε fallback)."""
+    blocks = []
+    for i, p in enumerate(chunk):
+        cands = p.get("candidates", [])
+        lines = "\n".join(
+            f"  {c['code']} - {c.get('description_en') or c.get('description_el','')}"
+            for c in cands)
+        blocks.append(f"[{i}] Προϊόν: {p.get('query','')}\nΥποψήφιοι:\n{lines}")
+    body = "\n\n".join(blocks)
+    prompt = (
+        "You are an expert EU customs (TARIC/Combined Nomenclature) classifier. For EACH product "
+        "below, choose the SINGLE best-matching code from ITS OWN candidate list.\n"
+        "Rules: identify what the product ESSENTIALLY is (material/composition/function, NOT brand); "
+        "pick the correct HS chapter first (dairy=04, coffee=09, cocoa/chocolate=18, waters/"
+        "beverages=22, cosmetics=33…); then the most specific heading. The product descriptions may "
+        "be in Greek — classify them directly. The chosen code MUST be exactly one of that product's "
+        "candidate codes (copy verbatim).\n"
+        "Return ONLY a valid JSON array, one object per product, in the same order:\n"
+        "[{\"i\": <product index>, \"code\": \"<one candidate code>\", "
+        "\"confidence\": <0..1>, \"rationale\": \"<μία σύντομη ελληνική πρόταση>\"}]\n\n"
+        f"{body}"
+    )
+    raw = chat(prompt, timeout=60, max_len=2200)
+    arr = _extract_json_array(raw)
+    if arr is None:
+        return None
+    by_i = {}
+    for obj in arr:
+        if isinstance(obj, dict) and "i" in obj:
+            try:
+                by_i[int(obj["i"])] = obj
+            except (TypeError, ValueError):
+                continue
+    out: list[Optional[dict[str, Any]]] = []
+    for i, p in enumerate(chunk):
+        obj = by_i.get(i)
+        out.append(_validate_choice(obj, p.get("candidates", [])) if obj else None)
+    # Αν το μοντέλο δεν επέστρεψε ΚΑΝΕΝΑ έγκυρο, θεώρησέ το αποτυχία -> fallback.
+    return out if any(o for o in out) else None
+
+
+def _validate_choice(obj: dict[str, Any], candidates: list[dict[str, Any]]
+                     ) -> Optional[dict[str, Any]]:
+    code = str(obj.get("code", "")).strip()
+    if not code:
+        return None
+    valid = {c["code"] for c in candidates}
+    if code not in valid:
+        match = next((vc for vc in valid if vc.startswith(code) or code.startswith(vc)), None)
+        if not match:
+            return None
+        code = match
+    try:
+        confidence = float(obj.get("confidence", 0.6))
+    except (TypeError, ValueError):
+        confidence = 0.6
+    return {"code": code, "rationale": str(obj.get("rationale", "")), "confidence": confidence}
+
+
+def _extract_json_array(raw: Optional[str]) -> Optional[list]:
+    if not raw:
+        return None
+    match = re.search(r"\[.*\]", raw, re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+        return data if isinstance(data, list) else None
+    except json.JSONDecodeError:
+        return None
+
+
 def rationalize(description: str, code: str, taric_desc: str) -> Optional[str]:
     """Σύντομη αιτιολόγηση (στα Ελληνικά) γιατί ένα προϊόν παίρνει έναν κωδικό TARIC."""
     prompt = (

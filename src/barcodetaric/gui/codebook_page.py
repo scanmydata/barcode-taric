@@ -303,10 +303,11 @@ class CodebookPage(QWidget):
         box = QMessageBox(self)
         box.setWindowTitle("Αντιστοίχιση όλων")
         box.setText(f"Θα αντιστοιχιστούν {len(pending)} εκκρεμή είδη.\n\n"
-                    "• Γρήγορη: χωρίς AI (FTS + εννοιολογικό) — για μεγάλα κωδικολόγια.\n"
-                    "• Ακριβής: με AI ανά είδος — πιο αργή, για μικρά σύνολα ή review.")
-        fast_btn = box.addButton("⚡ Γρήγορη (χωρίς AI)", QMessageBox.AcceptRole)
-        ai_btn = box.addButton("🎯 Ακριβής (με AI)", QMessageBox.AcceptRole)
+                    "• Ακριβής (AI): batch — πολλά προϊόντα ανά κλήση AI, το AI διαβάζει "
+                    "ελληνικά απευθείας. ~15-20′ για 10k. Συνιστάται.\n"
+                    "• Γρήγορη: offline (FTS + εννοιολογικό), χωρίς AI — πρόχειρο draft.")
+        ai_btn = box.addButton("🎯 Ακριβής (Batch-AI)", QMessageBox.AcceptRole)
+        fast_btn = box.addButton("⚡ Γρήγορη (offline)", QMessageBox.AcceptRole)
         box.addButton("Άκυρο", QMessageBox.RejectRole)
         box.exec()
         clicked = box.clickedButton()
@@ -538,24 +539,37 @@ def _apply_match(item: ClientItem, m) -> None:
 def _match_items(items: list[ClientItem], use_ai: bool, progress=None) -> int:
     """Αντιστοιχίζει λίστα ειδών· γράφει σε ΜΙΑ bulk transaction στο τέλος (ταχύτητα σε 10k).
 
-    Χωρίς AI => `fast` μονοπάτι (καθαρό FTS, ΧΩΡΙΣ δικτυακή μετάφραση/embeddings ανά είδος),
-    ώστε 4k-10k κωδικοί να τελειώνουν σε λεπτά αντί για ώρες.
+    - use_ai=True  => BATCH-AI (`taric_match.match_batch`): πολλά προϊόντα ανά κλήση AI,
+      ακρίβεια AI, ~500 κλήσεις για 10k. Το AI διαβάζει ελληνικά (χωρίς per-item μετάφραση).
+    - use_ai=False => `fast` offline μονοπάτι (FTS + semantic, χωρίς δίκτυο/AI) — πρόχειρο.
     """
     from ..engine import taric_match
     total = len(items)
-    fast = not use_ai
-    step = 10 if fast else 5           # συχνότερη ένδειξη προόδου (να μη φαίνεται κολλημένο)
     updated: list[ClientItem] = []
-    for i, item in enumerate(items, 1):
-        if progress and (i <= 2 or i % step == 0 or i == total):
-            pct = int(i / total * 100) if total else 100
-            progress(f"Αντιστοίχιση {i}/{total} ({pct}%): {item.description_el or item.barcode}")
-        m = taric_match.match(item.description_el, item.description_en, barcode=item.barcode,
-                              brand=item.brand, quantity=item.quantity, categories=item.categories,
-                              use_ai=use_ai, fast=fast)
-        if m.taric_code:
-            _apply_match(item, m)
-            updated.append(item)
+
+    if use_ai:
+        payload = [{"description_el": it.description_el, "description_en": it.description_en,
+                    "barcode": it.barcode, "brand": it.brand, "quantity": it.quantity,
+                    "categories": it.categories, "analysis": it.analysis, "source": it.source}
+                   for it in items]
+        matches = taric_match.match_batch(payload, progress=progress)
+        for item, m in zip(items, matches):
+            if m.taric_code:
+                _apply_match(item, m)
+                updated.append(item)
+    else:
+        step = 10                        # συχνότερη ένδειξη προόδου (να μη φαίνεται κολλημένο)
+        for i, item in enumerate(items, 1):
+            if progress and (i <= 2 or i % step == 0 or i == total):
+                pct = int(i / total * 100) if total else 100
+                progress(f"Αντιστοίχιση {i}/{total} ({pct}%): {item.description_el or item.barcode}")
+            m = taric_match.match(item.description_el, item.description_en, barcode=item.barcode,
+                                  brand=item.brand, quantity=item.quantity,
+                                  categories=item.categories, use_ai=False, fast=True)
+            if m.taric_code:
+                _apply_match(item, m)
+                updated.append(item)
+
     if progress:
         progress(f"Αποθήκευση {len(updated)} αντιστοιχίσεων…")
     repo.bulk_update_client_items(updated)

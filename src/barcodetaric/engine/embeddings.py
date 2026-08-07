@@ -199,6 +199,49 @@ def semantic_candidates(query: str, *, top: int = 6, min_score: float = 0.30,
     return out
 
 
+def semantic_candidates_batch(queries: list[str], *, top: int = 6, min_score: float = 0.30
+                              ) -> list[list]:
+    """Batch εκδοχή: κωδικοποιεί ΟΛΑ τα queries με μία `model.encode()` (πολύ ταχύτερο από
+    per-item) & επιστρέφει λίστα υποψηφίων ανά query. Για μαζική αντιστοίχιση 4k-10k κωδικών.
+    """
+    n = len(queries)
+    empty: list[list] = [[] for _ in range(n)]
+    if not queries or not available():
+        return empty
+    matrix = _load_or_build_matrix()
+    if matrix is None or len(_CODES) == 0:
+        return empty
+    import numpy as np
+
+    norm = [(q or "").strip() for q in queries]
+    idx_nonempty = [i for i, q in enumerate(norm) if q]
+    if not idx_nonempty:
+        return empty
+    qv = _encode([norm[i] for i in idx_nonempty])   # ΜΙΑ κλήση encode για όλα
+    if qv is None:
+        return empty
+    sims_all = matrix @ qv.T                          # (rows, n_nonempty)
+    out = empty
+    for col, qi in enumerate(idx_nonempty):
+        sims = sims_all[:, col]
+        order = np.argsort(-sims)[: max(top, 1)]
+        seen = set()
+        res = []
+        for r_idx in order:
+            score = float(sims[r_idx])
+            if score < min_score:
+                break
+            code = _CODES[r_idx]
+            if code in seen:
+                continue
+            seen.add(code)
+            row = repo.get_taric_row(code)
+            if row is not None and not (0 < getattr(row, "level", 0) < 4):
+                res.append((score, row))
+        out[qi] = res
+    return out
+
+
 def reset_cache() -> None:
     """Καθαρίζει το in-memory cache (π.χ. μετά από νέο import ονοματολογίας)."""
     global _MATRIX, _CODES, _ROWCOUNT

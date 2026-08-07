@@ -28,6 +28,16 @@ turns seconds into minutes.
 - `taric_match._rowcount()` caches the row count (was reopening a connection per token weight).
 - Measured: Excel insert 5000 rows 42s→0.06s (~700x); match 0.8/s→29/s (~35x); 10k ≈ 5.7 min
   FTS / ~10 min semantic; Excel read 5000/0.25s, export/0.76s.
+- **Per-item network translation is a hidden bulk killer.** `match()` called
+  `translation_api.to_english()` (a MyMemory round-trip) for every Greek-only row — thousands
+  of serial calls made match-all hang. `match(fast=True)` skips it (offline draft).
+- **Bulk accurate = Batch-AI** (`taric_match.match_batch`): catalog/ML resolve per item; the
+  rest get candidates (batched semantic via `embeddings.semantic_candidates_batch` — one
+  `model.encode()` for all queries — + FTS), then `ai.rank_taric_batch` sends ~12 products per
+  AI call (the LLM reads Greek directly). ~500 calls for 10k (~15–20 min) at AI accuracy. On
+  malformed batch JSON it falls back to per-item `rank_taric` for that chunk. This is the
+  scalable form of the user's "always classify by AI" rule; candidate-pool recall from Greek
+  FTS+semantic is the remaining accuracy lever.
 
 ## The "TARIC import freezes the whole app" bug
 Root cause was **no `busy_timeout`**: the long 25k-row `bulk_insert_taric` write lock stalled

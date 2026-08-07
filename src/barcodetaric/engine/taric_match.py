@@ -385,6 +385,104 @@ def match(description_el: str, description_en: str = "", *, barcode: str = "",
     return MatchResult(taric_source="none")
 
 
+def match_batch(items: list[dict], progress=None, batch_size: int = 12) -> list[MatchResult]:
+    """Μαζική αντιστοίχιση με BATCH-AI (πολλά προϊόντα ανά κλήση AI) — κλιμάκωση σε 4k-10k.
+
+    `items[i]` = {description_el, description_en, barcode, brand, quantity, categories,
+                  analysis, source}. Επιστρέφει MatchResult ίδιου μήκους/σειράς.
+
+    Στρατηγική: (α) catalog/ML ανά είδος (γρήγορα, τοπικά) όπου γίνεται· (β) για τα υπόλοιπα,
+    BATCH semantic encode + FTS -> υποψήφιοι, και BATCH AI rank. Το AI διαβάζει ελληνικά
+    απευθείας (χωρίς per-item δικτυακή μετάφραση).
+    """
+    n = len(items)
+    results: list[Optional[MatchResult]] = [None] * n
+    if not items:
+        return []
+    _rowcount(force=True)
+    model = get_model()
+    ml_ready = model.is_ready()
+
+    pending_idx: list[int] = []
+    queries: list[str] = []
+    for i, it in enumerate(items):
+        el = (it.get("description_el") or "").strip()
+        en = (it.get("description_en") or "").strip()
+        barcode = it.get("barcode") or ""
+        # (α) catalog barcode hit
+        if barcode:
+            cat = repo.get_catalog_by_barcode(barcode)
+            if cat and cat.taric_code:
+                results[i] = MatchResult(taric_code=cat.taric_code, hs4=cat.hs4 or cat.taric_code[:4],
+                                         taric_description=cat.taric_description,
+                                         confidence=cat.confidence or 0.9,
+                                         ai_rationale=cat.ai_rationale, taric_source="catalog")
+                continue
+        # (β) ML
+        if ml_ready:
+            pred = model.predict(el, en, barcode, it.get("brand", ""), it.get("quantity", ""),
+                                 it.get("categories", ""), it.get("analysis", ""))
+            if pred and pred.stage == "taric" and pred.code:
+                results[i] = MatchResult(taric_code=pred.code, hs4=pred.hs4,
+                                         taric_description=_lookup_taric_desc(pred.code),
+                                         confidence=pred.confidence, taric_source="ml",
+                                         ai_rationale="Πρόβλεψη τοπικού μοντέλου ML.")
+                continue
+        # χρειάζεται retrieval + AI
+        clean_el = clean_for_classification(el, brand=it.get("brand", ""))
+        clean_en = clean_for_classification(en, brand=it.get("brand", ""))
+        pending_idx.append(i)
+        queries.append(f"{clean_en} {clean_el}".strip() or f"{en} {el}".strip())
+
+    if pending_idx:
+        if progress:
+            progress(f"Εύρεση υποψηφίων για {len(pending_idx)} είδη…")
+        sem_all = embeddings.semantic_candidates_batch(queries, top=6)
+        products: list[dict] = []
+        cand_lists: list[list[dict]] = []
+        for k, i in enumerate(pending_idx):
+            it = items[i]
+            clean_el = clean_for_classification(it.get("description_el", ""), brand=it.get("brand", ""))
+            clean_en = clean_for_classification(it.get("description_en", ""), brand=it.get("brand", ""))
+            cands = fts_candidates(clean_el, clean_en, brand=it.get("brand", ""), top=8)
+            if _is_food_source(it.get("source", "")) and cands:
+                food = [(s, r) for s, r in cands if _is_food_chapter(r.code)]
+                if food:
+                    cands = food
+            merged = _merge_candidates(cands, sem_all[k])
+            cand_lists.append(merged)
+            products.append({"query": queries[k], "candidates": merged})
+
+        if progress:
+            progress(f"Batch AI για {len(products)} είδη (ανά {batch_size})…")
+        choices = ai.rank_taric_batch(products, batch_size=batch_size)
+        for k, i in enumerate(pending_idx):
+            results[i] = _result_from_choice(choices[k], cand_lists[k])
+
+    return [r if r is not None else MatchResult(taric_source="none") for r in results]
+
+
+def _result_from_choice(choice: Optional[dict], cand_dicts: list[dict]) -> MatchResult:
+    """AI επιλογή -> MatchResult· fallback στον κορυφαίο υποψήφιο (fts) αν το AI απέτυχε."""
+    if choice and choice.get("code"):
+        chosen = next((c for c in cand_dicts if c["code"] == choice["code"]), None)
+        return MatchResult(taric_code=choice["code"],
+                           hs4=(chosen or {}).get("hs4") or choice["code"][:4],
+                           taric_description=(chosen or {}).get("description_el")
+                           or (chosen or {}).get("description_en", ""),
+                           confidence=choice.get("confidence", 0.6),
+                           ai_rationale=choice.get("rationale", ""), taric_source="ai",
+                           candidates=cand_dicts)
+    if cand_dicts:
+        c = cand_dicts[0]
+        return MatchResult(taric_code=c["code"], hs4=c.get("hs4") or c["code"][:4],
+                           taric_description=c.get("description_el") or c.get("description_en", ""),
+                           confidence=0.4, taric_source="fts",
+                           ai_rationale="Καλύτερη αντιστοίχιση full-text (AI μη διαθέσιμο).",
+                           candidates=cand_dicts)
+    return MatchResult(taric_source="none")
+
+
 def _merge_candidates(fts: list, sem: list) -> list[dict]:
     """Ένωση FTS + semantic υποψηφίων (dedup ανά code, FTS σειρά πρώτα)."""
     out: list[dict] = []
