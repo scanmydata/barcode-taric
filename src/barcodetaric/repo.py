@@ -471,6 +471,7 @@ def verified_training_rows() -> list[dict[str, Any]]:
 # --------------------------------------------------------- taric_nomenclature ----
 
 def bulk_insert_taric(rows: list[TaricRow], version: str, source_url: str) -> int:
+    _TARIC_ROW_CACHE.clear()   # νέα ονοματολογία -> ακύρωσε το cache γραμμών
     with connect() as conn:
         conn.execute("DELETE FROM taric_nomenclature")
         conn.execute("DELETE FROM taric_nomenclature_fts")
@@ -510,28 +511,49 @@ def taric_meta() -> Optional[dict[str, Any]]:
         return dict(row) if row else None
 
 
+def _search_taric_conn(conn, text: str, limit: int) -> list[TaricRow]:
+    """FTS αναζήτηση μέσα σε ΥΠΑΡΧΟΥΣΑ σύνδεση (χωρίς νέο connect)."""
+    q = _fts_query(text)
+    if q:
+        try:
+            rows = conn.execute(
+                """SELECT t.* FROM taric_nomenclature t
+                   JOIN taric_nomenclature_fts f ON t.id=f.rowid
+                   WHERE taric_nomenclature_fts MATCH ? ORDER BY rank LIMIT ?""",
+                (q, limit),
+            ).fetchall()
+            if rows:
+                return [_row_to_taric(r) for r in rows]
+        except sqlite3.OperationalError:
+            pass
+    like = f"%{text.strip()}%"
+    rows = conn.execute(
+        """SELECT * FROM taric_nomenclature
+           WHERE description_el LIKE ? OR description_en LIKE ? LIMIT ?""",
+        (like, like, limit),
+    ).fetchall()
+    return [_row_to_taric(r) for r in rows]
+
+
 def search_taric(text: str, limit: int = 25) -> list[TaricRow]:
     with connect() as conn:
-        q = _fts_query(text)
-        if q:
-            try:
-                rows = conn.execute(
-                    """SELECT t.* FROM taric_nomenclature t
-                       JOIN taric_nomenclature_fts f ON t.id=f.rowid
-                       WHERE taric_nomenclature_fts MATCH ? ORDER BY rank LIMIT ?""",
-                    (q, limit),
-                ).fetchall()
-                if rows:
-                    return [_row_to_taric(r) for r in rows]
-            except sqlite3.OperationalError:
-                pass
-        like = f"%{text.strip()}%"
-        rows = conn.execute(
-            """SELECT * FROM taric_nomenclature
-               WHERE description_el LIKE ? OR description_en LIKE ? LIMIT ?""",
-            (like, like, limit),
-        ).fetchall()
-        return [_row_to_taric(r) for r in rows]
+        return _search_taric_conn(conn, text, limit)
+
+
+def search_taric_union(primary_query: str, terms: list[str], *, primary_limit: int = 120,
+                       term_limit: int = 40) -> tuple[list[TaricRow], list[TaricRow]]:
+    """Primary + per-term union retrieval σε ΜΙΑ σύνδεση (αντί 1+N νέες συνδέσεις).
+
+    Το `fts_candidates` έκανε 1 primary + έως 12 per-token αναζητήσεις, ΚΑΘΕ μία με νέο
+    `connect()` (PRAGMA setup) — ~13 συνδέσεις ανά είδος -> χιλιάδες σε rematch/bulk.
+    Εδώ ανοίγουμε μία σύνδεση για όλες. Επιστρέφει (primary_rows, term_rows).
+    """
+    with connect() as conn:
+        primary = _search_taric_conn(conn, primary_query, primary_limit)
+        term_rows: list[TaricRow] = []
+        for t in terms:
+            term_rows.extend(_search_taric_conn(conn, t, term_limit))
+        return primary, term_rows
 
 
 def taric_row_count() -> int:
@@ -557,13 +579,23 @@ def all_taric_rows() -> list[TaricRow]:
         return [_row_to_taric(r) for r in rows]
 
 
+# Cache γραμμών ονοματολογίας ανά code: η ονοματολογία είναι ΣΤΑΤΙΚΗ (αλλάζει μόνο σε import).
+# Το `get_taric_row` καλούνταν ανά υποψήφιο ανά είδος, ανοίγοντας ΝΕΑ σύνδεση κάθε φορά —
+# χιλιάδες connections σε bulk/rematch. Καθαρίζεται στο `bulk_insert_taric`.
+_TARIC_ROW_CACHE: dict[str, Optional[TaricRow]] = {}
+
+
 def get_taric_row(code: str) -> Optional[TaricRow]:
     """Μία γραμμή ονοματολογίας με ακριβή κωδικό (για retrieval μετά το embedding search)."""
+    if code in _TARIC_ROW_CACHE:
+        return _TARIC_ROW_CACHE[code]
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM taric_nomenclature WHERE code=? LIMIT 1", (code,)
         ).fetchone()
-        return _row_to_taric(row) if row else None
+        result = _row_to_taric(row) if row else None
+    _TARIC_ROW_CACHE[code] = result
+    return result
 
 
 def _row_to_taric(row: sqlite3.Row) -> TaricRow:

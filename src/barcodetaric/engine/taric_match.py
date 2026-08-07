@@ -214,16 +214,19 @@ def fts_candidates(description_el: str, description_en: str, *, brand: str = "",
     if not qtokens:  # αν έμεινε μόνο η μάρκα, ξαναβάλε τα πάντα
         qtokens = _tokens(query)
 
-    # PRIMARY retrieval σε σειρά BM25 (η θέση δίνει relevance bonus πιο κάτω).
-    primary = repo.search_taric(query, limit=120)
+    # PRIMARY + UNION retrieval σε ΜΙΑ σύνδεση (πριν: 1+έως12 νέες συνδέσεις ανά είδος).
+    # UNION: ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά — εγγυάται ότι το heading του ΒΑΣΙΚΟΥ
+    # ουσιαστικού (milk/γάλα, butter/βούτυρο) μπαίνει στο pool, ακόμη κι όταν το bm25 του
+    # σύνθετου query «θάβει» τη γενική επικεφαλίδα κάτω από σπάνιους προσδιορισμούς.
+    # Μόνο οι πιο ΠΛΗΡΟΦΟΡΙΑΚΟΙ όροι (υψηλό IDF) για union — οι κοινές λέξεις (νερό/άλλα)
+    # δεν προσθέτουν χρήσιμους υποψηφίους αλλά κοστίζουν FTS query ο καθένας.
+    union_terms = sorted(qtokens, key=_w, reverse=True)[:6]
+    primary, term_rows = repo.search_taric_union(query, union_terms,
+                                                 primary_limit=120, term_limit=40)
     pos = {r.code: i for i, r in enumerate(primary)}
     pool: dict[str, object] = {r.code: r for r in primary}
-    # UNION retrieval: ψάξε ΚΑΙ κάθε σημαντικό όρο ξεχωριστά — εγγυάται ότι το heading του
-    # ΒΑΣΙΚΟΥ ουσιαστικού (milk/γάλα, butter/βούτυρο) μπαίνει στο pool, ακόμη κι όταν το
-    # bm25 του σύνθετου query «θάβει» τη γενική επικεφαλίδα κάτω από σπάνιους προσδιορισμούς.
-    for tok in list(qtokens)[:12]:
-        for r in repo.search_taric(tok, limit=40):
-            pool.setdefault(r.code, r)
+    for r in term_rows:
+        pool.setdefault(r.code, r)
 
     # Score = IDF-coverage (_score) + BM25 relevance bonus. Το bonus κρατά τη σωστή σειρά
     # retrieval ώστε μια ΣΠΑΝΙΑ λέξη-επίθετο (π.χ. «unsalted») να μη σπρώξει άσχετο κεφάλαιο
