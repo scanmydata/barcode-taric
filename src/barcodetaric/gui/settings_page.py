@@ -58,9 +58,9 @@ class SettingsPage(QWidget):
         model_l = QHBoxLayout(model_row)
         model_l.setContentsMargins(0, 0, 0, 0)
         model_l.addWidget(self.openrouter_model, 1)
-        free_btn = QPushButton("Λίστα μοντέλων")
-        free_btn.setToolTip("Λήψη των δωρεάν μοντέλων OpenRouter")
-        free_btn.clicked.connect(self._load_free_models)
+        free_btn = QPushButton("Ανανέωση λίστας")
+        free_btn.setToolTip("Λήψη ΤΩΡΑ των δωρεάν μοντέλων OpenRouter (αγνοεί το cache)")
+        free_btn.clicked.connect(lambda: self._load_free_models(force=True))
         model_l.addWidget(free_btn)
         smart_btn = QPushButton("Έξυπνη επιλογή")
         smart_btn.setToolTip("Δοκιμάζει τα κορυφαία δωρεάν μοντέλα & επιλέγει ένα που δουλεύει")
@@ -72,6 +72,10 @@ class SettingsPage(QWidget):
         self.groq_key.setPlaceholderText("gsk_… (προαιρετικό)")
         ai_l.addRow("OpenRouter API key", self.openrouter_key)
         ai_l.addRow("Μοντέλο (:free)", model_row)
+        # Δείχνει πόσα δωρεάν μοντέλα φορτώθηκαν — η λίστα ανανεώνεται ΑΥΤΟΜΑΤΑ στο άνοιγμα
+        # των Ρυθμίσεων (με cache TTL), γιατί το free landscape του OpenRouter αλλάζει συχνά.
+        self.models_status = muted("Η λίστα δωρεάν μοντέλων ανανεώνεται αυτόματα…")
+        ai_l.addRow("", self.models_status)
         ai_l.addRow("", muted("Συνιστώμενο: OpenRouter με δωρεάν μοντέλο (:free προστίθεται αυτόματα). "
                               "Τα no-key (Pollinations/DuckDuckGo) πλέον χρεώνουν/περιορίζονται (402/429)."))
         ai_l.addRow("Groq API key (προαιρ.)", self.groq_key)
@@ -252,20 +256,37 @@ class SettingsPage(QWidget):
         root.addStretch(1)
 
     # ---------------------------------------------------------- actions ----
-    def _load_free_models(self) -> None:
-        run_async(self, ai.list_free_models, on_done=self._on_free_models,
-                  on_error=lambda _m: None)
+    def showEvent(self, event) -> None:
+        """Στο άνοιγμα των Ρυθμίσεων ανανέωσε ΑΥΤΟΜΑΤΑ τη λίστα δωρεάν μοντέλων (cached TTL)."""
+        super().showEvent(event)
+        if not getattr(self, "_models_autoloaded", False):
+            self._models_autoloaded = True
+            self._load_free_models(force=False)
+
+    def _load_free_models(self, force: bool = False) -> None:
+        self._force_reload = force
+        if force:
+            self.models_status.setText("Ανανέωση λίστας δωρεάν μοντέλων…")
+        run_async(self, lambda: ai.list_free_models(force=force),
+                  on_done=self._on_free_models,
+                  on_error=lambda _m: self.models_status.setText(
+                      "Αποτυχία λήψης λίστας μοντέλων (έλεγξε σύνδεση/OpenRouter key)."))
 
     def _on_free_models(self, models: list) -> None:
         if not models:
-            QMessageBox.information(self, "Δωρεάν μοντέλα",
-                                    "Δεν βρέθηκαν (ελέγξτε το OpenRouter key/σύνδεση).")
+            self.models_status.setText("Δεν βρέθηκαν δωρεάν μοντέλα (έλεγξε OpenRouter key/σύνδεση).")
+            if getattr(self, "_force_reload", False):
+                QMessageBox.information(self, "Δωρεάν μοντέλα",
+                                        "Δεν βρέθηκαν (ελέγξτε το OpenRouter key/σύνδεση).")
             return
         current = self.openrouter_model.currentText()
         self.openrouter_model.clear()
         self.openrouter_model.addItems(models)
-        if current in models:
-            self.openrouter_model.setCurrentText(current)
+        # κράτα την τρέχουσα επιλογή· αν αποσύρθηκε, βάλ' την πρώτη διαθέσιμη
+        self.openrouter_model.setCurrentText(current if current in models else models[0])
+        self.models_status.setText(
+            f"{len(models)} δωρεάν μοντέλα διαθέσιμα — διάλεξε σε ποιο θα στέλνονται τα δεδομένα."
+            + ("" if current in models else "  ⚠ το προηγούμενο δεν είναι πλέον διαθέσιμο."))
 
     def _smart_pick_model(self) -> None:
         self.log_view.setPlainText("Έξυπνη επιλογή δωρεάν μοντέλου…")

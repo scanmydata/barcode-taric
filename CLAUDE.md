@@ -67,10 +67,17 @@ engine/       καθαρή μηχανή (χωρίς Qt, χωρίς SQL εκτό�
   ai.py            provider chain (σειρά SETTINGS): custom(OpenAI-compat, π.χ. local ollama μέσω cloudflare,
                    custom_ai_base_url)->openrouter(:free)->groq->duckduckgo->pollinations. chat()/translate()/
                    infer_product()/rank_taric()/rationalize()/enrich_description(). `_openrouter` έχει AUTO-FALLBACK
-                   σε 404 (retired free model). `best_free_model()`/`list_free_models`. `_custom_endpoint_url()`
+                   σε 404 (retired free model). `best_free_model()`/`list_free_models` (cached, TTL
+                   `free_models_ttl_sec`, `force=True` για άμεση ανανέωση — το settings page τη φορτώνει
+                   ΑΥΤΟΜΑΤΑ στο showEvent ώστε ο χρήστης να διαλέγει πάντα από ΕΝΕΡΓΑ δωρεάν μοντέλα).
+                   `rank_taric_batch()`/`_rank_batch_chunk` = ΜΑΖΙΚΗ κατάταξη (N προϊόντα/κλήση) με
+                   ADAPTIVE prompt: κοινό «CODEBOOK» (dedup υποψηφίων) όταν επαναλαμβάνονται —μαζικό
+                   import ομοειδών: ~50% λιγότερα tokens— αλλιώς inline. Διαλέγει το φθηνότερο αυτόματα.
+                   `_custom_endpoint_url()`
                    κανονικοποιεί base/…/v1/…/chat/completions.
   web_search.py    web results tiers (web_search_order): SearXNG(JSON meta) -> DuckDuckGo -> Brave(API) ->
-                   headless(ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium· headless_engine=bing/duckduckgo/google) ->
+                   headless(ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium· headless_engine=brave/bing/duckduckgo/google·
+                   brave=search.brave.com μέσω local browser, anti-bot) ->
                    Google CSE -> googlesearch -> OpenSERP. `_via_headless`/`_headless_search` = το ισχυρό
                    fallback (Bing/DDG δουλεύουν με automation· Google -> CAPTCHA /sorry). Cached driver.
                    `_init_undetected()` = undetected-chromedriver (anti-bot) ΠΡΩΤΑ, graceful fallback σε

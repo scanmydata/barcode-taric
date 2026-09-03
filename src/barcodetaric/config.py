@@ -27,6 +27,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # Το free-model landscape του OpenRouter αλλάζει· κράτα ΕΝΕΡΓΟ default (το παλιό
     # llama-3.3-70b:free αποσύρθηκε -> 404). Δες settings_page «Λήψη δωρεάν μοντέλων».
     "openrouter_model": "openai/gpt-oss-20b:free",
+    # Πόσο συχνά ανανεώνεται η λίστα δωρεάν μοντέλων OpenRouter (το free landscape αλλάζει
+    # συχνά — μοντέλα αποσύρονται). Default 6h· οι Ρυθμίσεις τη φορτώνουν αυτόματα στο άνοιγμα.
+    "free_models_ttl_sec": 21600,
     "openrouter_api_key": "",
     # Custom OpenAI-συμβατό endpoint (π.χ. τοπικό ollama μέσω Cloudflare tunnel).
     # Αν συμπληρωθεί το custom_ai_base_url, ο provider «custom» γίνεται διαθέσιμος.
@@ -45,7 +48,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "openserp_timeout": 45,      # ο headless browser του OpenSERP αργεί στο πρώτο query
     "searxng_timeout": 15,
     # headless = ΠΡΑΓΜΑΤΙΚΟΣ browser (Chrome μέσω Selenium) — το ισχυρό fallback.
-    "headless_engine": "bing",  # bing/duckduckgo δουλεύουν με automation· google -> CAPTCHA
+    "headless_engine": "bing",  # brave/bing/duckduckgo δουλεύουν με automation· google -> CAPTCHA.
+    #                             brave = search.brave.com μέσω local browser (anti-bot friendly)
     # cloudscraper / anti-bot: χρήση του VeNoMouS/cloudscraper για Cloudflare/anti-bot pages.
     "cloudscraper_enabled": True,
     "cloudscraper_timeout": 20,

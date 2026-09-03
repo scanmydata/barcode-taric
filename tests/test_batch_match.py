@@ -28,7 +28,11 @@ def stub_ai(monkeypatch):
     def fake_chat(prompt, **kw):
         calls["n"] += 1
         out = []
-        for m in re.finditer(r"\[(\d+)\] .*?Υποψήφιοι:\n\s*(\d{4,10})", prompt, re.S):
+        # Το batch prompt έχει ΔΥΟ μορφές (διαλέγεται η φθηνότερη σε tokens):
+        #   shared : κοινό CODEBOOK + «[i] query / allowed: c1, c2»
+        #   inline : «[i] query / c1 = desc»
+        # Ο stub πιάνει και τις δύο: index -> ο 1ος κωδικός που ακολουθεί.
+        for m in re.finditer(r"\[(\d+)\][^\[]*?(\d{4,10})", prompt, re.S):
             out.append({"i": int(m.group(1)), "code": m.group(2),
                         "confidence": 0.8, "rationale": "test"})
         return json.dumps(out)

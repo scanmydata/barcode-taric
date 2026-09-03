@@ -4,8 +4,9 @@
   1. searxng      self-host/public SearXNG meta-search (JSON API, χωρίς blocks)
   2. duckduckgo   HTML endpoint (χωρίς key/όρια, γρήγορο)
   3. brave        Brave Search API (με key)
-  4. headless     ΠΡΑΓΜΑΤΙΚΟΣ browser (Selenium+Chrome) σε Bing/DuckDuckGo/Google — εκτελεί
-                  JS, το ισχυρό fallback που λύνει ό,τι δεν λύνουν τα ελαφριά tiers
+  4. headless     ΠΡΑΓΜΑΤΙΚΟΣ browser (Selenium+Chrome) σε Brave/Bing/DuckDuckGo/Google — εκτελεί
+                  JS, το ισχυρό fallback που λύνει ό,τι δεν λύνουν τα ελαφριά tiers. Το engine=brave
+                  ψάχνει στο search.brave.com μέσω τοπικού browser (ανεξ. index, anti-bot friendly).
   5. google_cse   Google Custom Search JSON API (key+cse_id)
   6. googlesearch googlesearch-python (scraping, αργό/rate-limited)
   7. openserp     τοπικός OpenSERP server (headless browser, χωρίς key)
@@ -241,7 +242,7 @@ def _via_headless(query: str, limit: int) -> list[dict[str, str]]:
     if driver is None:
         return []
     engine = (SETTINGS.get("headless_engine") or "bing").strip().lower()
-    order = [engine] + [e for e in ("bing", "duckduckgo", "google") if e != engine]
+    order = [engine] + [e for e in ("brave", "bing", "duckduckgo", "google") if e != engine]
     for eng in order:
         try:
             res = _headless_search(driver, eng, query, limit)
@@ -262,6 +263,12 @@ def _headless_search(driver, engine: str, query: str, limit: int) -> list[dict[s
     import time as _t
 
     specs = {
+        # search.brave.com μέσω ΠΡΑΓΜΑΤΙΚΟΥ browser (όχι το API): ανεξάρτητος index, πιο ανεκτικό
+        # σε automation από τη Google (χωρίς /sorry CAPTCHA). Ιδανικό όταν τρέχει τοπικά.
+        "brave": ("https://search.brave.com/search?q={q}&source=web",
+                  "div.snippet[data-type='web'], div.snippet, div#results div.snippet",
+                  "a.heading-serpresult, a.result-header, a[href^='http']",
+                  (".snippet-description", ".snippet-content", ".snippet-desc", "p")),
         "bing": ("https://www.bing.com/search?q={q}&setlang=en",
                  "li.b_algo", "h2 a", ("div.b_caption p", ".b_lineclamp2", "p")),
         "duckduckgo": ("https://duckduckgo.com/?q={q}&ia=web",
@@ -272,9 +279,13 @@ def _headless_search(driver, engine: str, query: str, limit: int) -> list[dict[s
                     "div.MjjYud, div.tF2Cxc, div.g", "a[href^='http']",
                     ("div.VwiC3b", "div[data-sncf]", "div.kb0PBd")),
     }
+    # Μερικές μηχανές (Brave) βάζουν στο anchor και το breadcrumb URL -> το a.text δίνει σκουπίδια.
+    # Γι' αυτές, τράβα τον τίτλο από ξεχωριστό υπο-στοιχείο.
+    title_sels = {"brave": (".title", ".snippet-title", "span.title")}
     if engine not in specs:
         engine = "bing"
     url_tpl, block_sel, link_sel, snippet_sels = specs[engine]
+    engine_title_sels = title_sels.get(engine)
     url = url_tpl.format(q=quote_plus(query), n=min(limit + 3, 15))
     driver.get(url)
 
@@ -305,8 +316,16 @@ def _headless_search(driver, engine: str, query: str, limit: int) -> list[dict[s
             if not links:
                 continue
             a = links[0]
-            title = (a.text or "").strip()
             url_v = a.get_attribute("href") or ""
+            title = ""
+            if engine_title_sels:  # τίτλος από ξεχωριστό υπο-στοιχείο (π.χ. Brave .title)
+                for tsel in engine_title_sels:
+                    tels = b.find_elements(By.CSS_SELECTOR, tsel)
+                    if tels and tels[0].text.strip():
+                        title = tels[0].text.strip()
+                        break
+            if not title:
+                title = (a.text or "").strip()
             if not title or not url_v or not url_v.startswith("http"):
                 continue
             snippet = ""
@@ -315,6 +334,19 @@ def _headless_search(driver, engine: str, query: str, limit: int) -> list[dict[s
                 if els and els[0].text.strip():
                     snippet = els[0].text.strip()
                     break
+            if not snippet:
+                # Fallback: κείμενο ολόκληρου του block μείον τον τίτλο (DOM-agnostic — δουλεύει
+                # ακόμη κι όταν αλλάζουν τα class names, π.χ. Brave/Svelte scoped classes).
+                btext = " ".join((b.text or "").split())
+                if title and title in btext:
+                    btext = btext.replace(title, " ", 1).strip()
+                snippet = btext[:200]
+            # Καθάρισμα SSR artifacts (π.χ. Brave/Svelte «<!-- -->») + πολλαπλά κενά/newlines,
+            # ώστε το context που φεύγει στο AI να είναι καθαρό.
+            title = re.sub(r"<!--.*?-->", " ", title)
+            title = re.sub(r"\s+", " ", title).strip(" |")
+            snippet = re.sub(r"<!--.*?-->", " ", snippet)
+            snippet = re.sub(r"\s+", " ", snippet).strip()
             out.append({"title": title, "url": url_v, "snippet": snippet})
             if len(out) >= limit:
                 break

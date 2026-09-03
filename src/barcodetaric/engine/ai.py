@@ -137,17 +137,30 @@ def _openrouter(prompt: str, timeout: int) -> Optional[str]:
     return None
 
 
-def list_free_models(timeout: int = 15) -> list[str]:
+# Cache της λίστας δωρεάν μοντέλων: το free landscape του OpenRouter αλλάζει συχνά, οπότε
+# θέλουμε ΣΥΧΝΟ refresh — αλλά όχι HTTP κλήση σε κάθε άνοιγμα των Ρυθμίσεων. TTL από settings.
+_FREE_CACHE: dict[str, Any] = {"ts": 0.0, "models": []}
+
+
+def list_free_models(timeout: int = 15, *, force: bool = False) -> list[str]:
     """Δωρεάν chat μοντέλα OpenRouter (pricing prompt==0), φιλτραρισμένα & ταξινομημένα.
 
     Αποκλείει audio/image/embedding/moderation μοντέλα και βάζει τις καλές instruct
     οικογένειες πρώτες (βλ. `_rank_free`) ώστε η «έξυπνη» επιλογή να πετύχει γρήγορα.
+    Cached με TTL (`free_models_ttl_sec`, default 6h)· `force=True` παρακάμπτει το cache.
     """
+    import time as _time
+    try:
+        ttl = int(SETTINGS.get("free_models_ttl_sec") or 21600)
+    except (TypeError, ValueError):
+        ttl = 21600
+    if not force and _FREE_CACHE["models"] and (_time.time() - _FREE_CACHE["ts"]) < ttl:
+        return list(_FREE_CACHE["models"])
     try:
         data = http_json("https://openrouter.ai/api/v1/models", timeout=timeout)
     except Exception as exc:  # noqa: BLE001
         debug(f"list_free_models failed: {exc}")
-        return []
+        return list(_FREE_CACHE["models"])  # σερβίρισε το τελευταίο γνωστό αν υπάρχει
     out = []
     for m in (data.get("data") or []):
         mid = m.get("id", "")
@@ -161,7 +174,11 @@ def list_free_models(timeout: int = 15) -> list[str]:
         if "text" not in modalities:
             continue
         out.append(mid)
-    return _rank_free(list(set(out)))
+    ranked = _rank_free(list(set(out)))
+    if ranked:
+        _FREE_CACHE["models"] = ranked
+        _FREE_CACHE["ts"] = _time.time()
+    return ranked
 
 
 def best_free_model(timeout: int = 12, tries: int = 4) -> Optional[str]:
@@ -630,26 +647,50 @@ def rank_taric_batch(products: list[dict[str, Any]], batch_size: int = 20
 
 def _rank_batch_chunk(chunk: list[dict[str, Any]]) -> Optional[list[Optional[dict[str, Any]]]]:
     """Μία κλήση AI για ≤batch_size προϊόντα. None => αποτυχία parse (κάνε fallback)."""
-    blocks = []
+    # ΒΕΛΤΙΣΤΟΠΟΙΗΣΗ PROMPT: οι υποψήφιοι ΕΠΑΝΑΛΑΜΒΑΝΟΝΤΑΙ έντονα μεταξύ προϊόντων (τα ίδια
+    # headings). Αντί να στέλνουμε την περιγραφή κάθε κωδικού N φορές, στέλνουμε ΜΙΑ ΦΟΡΑ ένα
+    # κοινό «κωδικολόγιο» (το σχετικό slice της ονοματολογίας) και μετά κάθε προϊόν αναφέρει
+    # ΜΟΝΟ τους επιτρεπτούς κωδικούς του. Μεγάλη μείωση tokens -> μεγαλύτερα batches/λιγότερες κλήσεις.
+    codebook: dict[str, str] = {}
+    for p in chunk:
+        for c in p.get("candidates", []):
+            code = c.get("code", "")
+            if code and code not in codebook:
+                codebook[code] = (c.get("description_en") or c.get("description_el") or "").strip()
+    book = "\n".join(f"{code} = {desc}" for code, desc in codebook.items())
+
+    shared_blocks, inline_blocks = [], []
     for i, p in enumerate(chunk):
         cands = p.get("candidates", [])
+        allowed = ", ".join(c["code"] for c in cands if c.get("code"))
+        shared_blocks.append(f"[{i}] {p.get('query','')}\n     allowed: {allowed}")
         lines = "\n".join(
-            f"  {c['code']} - {c.get('description_en') or c.get('description_el','')}"
+            f"     {c['code']} = {c.get('description_en') or c.get('description_el','')}"
             for c in cands)
-        blocks.append(f"[{i}] Προϊόν: {p.get('query','')}\nΥποψήφιοι:\n{lines}")
-    body = "\n\n".join(blocks)
+        inline_blocks.append(f"[{i}] {p.get('query','')}\n{lines}")
+
+    shared = ("=== CODEBOOK (TARIC code = official description) ===\n" + book +
+              "\n\n=== PRODUCTS (index, description, allowed codes) ===\n" +
+              "\n".join(shared_blocks))
+    inline = "=== PRODUCTS (index, description, candidate codes) ===\n" + "\n".join(inline_blocks)
+    # Το κοινό codebook κερδίζει ΜΟΝΟ όταν οι υποψήφιοι επαναλαμβάνονται αρκετά μεταξύ
+    # προϊόντων (συνηθισμένο σε μαζικό import ομοειδών ειδών). Σε ανομοιογενή batches το
+    # inline είναι μικρότερο — διάλεξε αυτόματα το φθηνότερο σε tokens.
+    body = shared if len(shared) <= len(inline) else inline
+
     prompt = (
-        "You are an expert EU customs (TARIC/Combined Nomenclature) classifier. For EACH product "
-        "below, choose the SINGLE best-matching code from ITS OWN candidate list.\n"
-        "Rules: identify what the product ESSENTIALLY is (material/composition/function, NOT brand); "
-        "pick the correct HS chapter first (dairy=04, coffee=09, cocoa/chocolate=18, waters/"
-        "beverages=22, cosmetics=33…); then the most specific heading. The product descriptions may "
-        "be in Greek — classify them directly. The chosen code MUST be exactly one of that product's "
-        "candidate codes (copy verbatim).\n"
-        "Return ONLY a valid JSON array, one object per product, in the same order:\n"
-        "[{\"i\": <product index>, \"code\": \"<one candidate code>\", "
-        "\"confidence\": <0..1>, \"rationale\": \"<μία σύντομη ελληνική πρόταση>\"}]\n\n"
-        f"{body}"
+        "You are an expert EU customs (TARIC/Combined Nomenclature) classifier.\n\n"
+        f"{body}\n\n"
+        "For EACH product choose the SINGLE best code from ITS OWN candidate/allowed list.\n"
+        "Rules: identify what the product ESSENTIALLY is (material/composition/function, NOT the "
+        "brand); pick the correct HS chapter first (dairy=04, coffee=09, cocoa/chocolate=18, "
+        "waters/beverages=22, cosmetics=33…), rejecting candidates from an unrelated chapter even "
+        "if words overlap; then the most specific heading (use generic '…90/…99' only if nothing "
+        "specific fits). Product descriptions may be in Greek — classify them directly. "
+        "The chosen code MUST appear verbatim in that product's allowed list.\n"
+        "Return ONLY a valid JSON array, one object per product, same order, no commentary:\n"
+        "[{\"i\": <index>, \"code\": \"<allowed code>\", "
+        "\"confidence\": <0..1>, \"rationale\": \"<μία σύντομη ελληνική πρόταση>\"}]"
     )
     # Μεγαλύτερα batches (slow free tiers) -> γενναιόδωρο timeout & output limit.
     raw = chat(prompt, timeout=120, max_len=6000)

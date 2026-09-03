@@ -50,8 +50,29 @@
 
 > ⚠️ **Το free-model landscape του OpenRouter αλλάζει** — μοντέλα αποσύρονται και το API επιστρέφει
 > `404`. Το app κάνει **auto-fallback** (working → `openai/gpt-oss-20b:free` → `openrouter/free`) και
-> «θυμάται» αυτό που δουλεύει. Στις **Ρυθμίσεις**: «Έξυπνη επιλογή» + «Λίστα μοντέλων». Default:
-> `openai/gpt-oss-20b:free`.
+> «θυμάται» αυτό που δουλεύει. Default: `openai/gpt-oss-20b:free`.
+
+### Επιλογή μοντέλου OpenRouter (Ρυθμίσεις)
+
+Στις **Ρυθμίσεις → Μοντέλο (:free)** διαλέγεις **σε ποιο μοντέλο στέλνονται τα δεδομένα**. Η λίστα
+των δωρεάν μοντέλων **ανανεώνεται αυτόματα** κάθε φορά που ανοίγεις τις Ρυθμίσεις (με cache TTL
+`free_models_ttl_sec`, default 6h) — φιλτραρισμένη σε chat/instruct μοντέλα και ταξινομημένη με τα
+καλύτερα πρώτα. Κουμπιά: **«Ανανέωση λίστας»** (άμεση λήψη, αγνοεί το cache) και **«Έξυπνη επιλογή»**
+(δοκιμάζει τα κορυφαία & κρατά ένα που όντως απαντά). Αν το αποθηκευμένο μοντέλο αποσυρθεί,
+επισημαίνεται και επιλέγεται αυτόματα διαθέσιμο.
+
+### Μαζικό rationalization (πολλά προϊόντα ανά prompt)
+
+Η μαζική αντιστοίχιση στέλνει **N προϊόντα σε ΜΙΑ κλήση AI** (`rank_taric_batch`, default 20/κλήση)
+αντί για μία κλήση ανά προϊόν. Το prompt είναι **adaptive**:
+
+- Όταν οι υποψήφιοι κωδικοί **επαναλαμβάνονται** μεταξύ προϊόντων (τυπικό σε μαζικό import ομοειδών),
+  στέλνεται **μία φορά ένα κοινό «CODEBOOK»** (το σχετικό slice της ονοματολογίας: `κωδικός = επίσημη
+  περιγραφή`) και κάθε προϊόν αναφέρει μόνο τους επιτρεπτούς κωδικούς του → **~50% λιγότερα tokens**.
+- Σε ανομοιογενή batches χρησιμοποιείται το κλασικό inline format (μικρότερο εκεί).
+
+Το app μετρά και τα δύο και διαλέγει **αυτόματα το φθηνότερο**. Ολόκληρη η ονοματολογία (~25.7k
+κωδικοί) **δεν** στέλνεται ποτέ — μόνο οι υποψήφιοι που επέλεξε το retrieval (FTS+embeddings).
 
 ## Δωρεάν μετάφραση (χωρίς LLM) & English-first
 
@@ -91,9 +112,10 @@ default `searxng → duckduckgo → brave → headless → google_cse → google
 3. **[Brave Search API](https://brave.com/search/api/)** — επίσημο JSON, ~2000 δωρεάν queries/μήνα (key).
 4. **headless browser** — **ΠΡΑΓΜΑΤΙΚΟΣ Chrome μέσω Selenium** που εκτελεί JS· το **ισχυρό fallback**
    που λύνει ό,τι δεν λύνουν τα ελαφριά tiers. `pip install -e ".[headless]"` + εγκατεστημένο Chrome.
-   Μηχανή από `headless_engine`: **Bing** (default) & **DuckDuckGo** δουλεύουν με automation· η **Google**
-   ζητά CAPTCHA (`/sorry`). `headless_headed=true` = ορατό παράθυρο· προαιρετικά χρήση πραγματικού
-   προφίλ Chrome (cookies/consent) — **κλείσε το Chrome πρώτα**.
+   Μηχανή από `headless_engine`: **Brave** (`search.brave.com` — ανεξάρτητος index, anti-bot friendly),
+   **Bing** & **DuckDuckGo** δουλεύουν με automation· η **Google** ζητά CAPTCHA (`/sorry`).
+   `headless_headed=true` = ορατό παράθυρο· προαιρετικά χρήση πραγματικού προφίλ Chrome
+   (cookies/consent) — **κλείσε το Chrome πρώτα**. Δοκιμή: `scripts\search_smoketest.py --engine brave`.
    - **[undetected-chromedriver](https://github.com/ultrafunkamsterdam/undetected-chromedriver)**
      (`pip install -e ".[anti_bot]"`) χρησιμοποιείται **αυτόματα ΠΡΩΤΑ** (`headless_undetected=true`)
      για παράκαμψη anti-bot (Cloudflare/reCAPTCHA)· αν αποτύχει (π.χ. ασυμβατότητα Chrome version),
